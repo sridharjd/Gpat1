@@ -125,45 +125,147 @@ exports.exportReport = async (req, res) => {
 // User Management
 exports.getAllUsers = async (req, res) => {
   try {
-    const [users] = await db.query('SELECT * FROM users');
-    res.json(users);
-  } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+    const [users] = await db.query(
+      `SELECT 
+        u.username,
+        u.email,
+        u.is_admin,
+        u.is_verified,
+        u.created_at,
+        COALESCE(up.test_count, 0) as test_count,
+        COALESCE(up.avg_score, 0) as avg_score
+      FROM users u
+      LEFT JOIN (
+        SELECT 
+          username,
+          COUNT(*) as test_count,
+          AVG(score) as avg_score
+        FROM user_performance
+        GROUP BY username
+      ) up ON u.username = up.username
+      ORDER BY u.created_at DESC`
+    );
+
+    res.json({
+      success: true,
+      data: users.map(user => ({
+        ...user,
+        avg_score: Number(user.avg_score || 0).toFixed(1)
+      }))
+    });
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch users. Please try again later.'
+    });
   }
 };
 
 exports.getUserById = async (req, res) => {
   try {
-    const [user] = await db.query('SELECT * FROM users WHERE id = ?', [req.params.id]);
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+    const { id } = req.params;
+    const [users] = await db.query(
+      `SELECT 
+        u.*,
+        COALESCE(up.test_count, 0) as test_count,
+        COALESCE(up.avg_score, 0) as avg_score
+      FROM users u
+      LEFT JOIN (
+        SELECT 
+          username,
+          COUNT(*) as test_count,
+          AVG(score) as avg_score
+        FROM user_performance
+        GROUP BY username
+      ) up ON u.username = up.username
+      WHERE u.username = ?`,
+      [id]
+    );
+
+    if (!users || users.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
     }
-    res.json(user);
-  } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+
+    res.json({
+      success: true,
+      data: {
+        ...users[0],
+        avg_score: Number(users[0].avg_score || 0).toFixed(1)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch user details. Please try again later.'
+    });
   }
 };
 
 exports.updateUser = async (req, res) => {
   try {
-    const [user] = await db.query('UPDATE users SET ? WHERE id = ?', [req.body, req.params.id]);
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-    res.json(user);
-  } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+    const { id } = req.params;
+    const { is_admin, is_verified } = req.body;
+
+    await db.query(
+      'UPDATE users SET is_admin = ?, is_verified = ? WHERE username = ?',
+      [is_admin, is_verified, id]
+    );
+
+    res.json({
+      success: true,
+      message: 'User updated successfully'
+    });
+  } catch (error) {
+    console.error('Error updating user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update user. Please try again later.'
+    });
   }
 };
 
 exports.deleteUser = async (req, res) => {
   try {
-    const [user] = await db.query('DELETE FROM users WHERE id = ?', [req.params.id]);
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+    const { id } = req.params;
+
+    // Start a transaction
+    const connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    try {
+      // Delete user's performance records
+      await connection.query('DELETE FROM user_performance WHERE username = ?', [id]);
+      
+      // Delete user's responses
+      await connection.query(
+        'DELETE ur FROM user_responses ur JOIN user_performance up ON ur.performance_id = up.id WHERE up.username = ?',
+        [id]
+      );
+      
+      // Delete the user
+      await connection.query('DELETE FROM users WHERE username = ?', [id]);
+
+      await connection.commit();
+      res.json({
+        success: true,
+        message: 'User deleted successfully'
+      });
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
     }
-    res.json({ message: 'User deleted successfully' });
-  } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete user. Please try again later.'
+    });
   }
 };

@@ -11,6 +11,7 @@ const testRoutes = require('./routes/testRoutes');
 const userRoutes = require('./routes/userRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const performanceRoutes = require('./routes/performanceRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -28,7 +29,7 @@ const limiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   message: 'Too many requests from this IP, please try again in an hour!'
 });
-app.use('/api', limiter);
+app.use(limiter);
 
 // Body parser
 app.use(express.json({ limit: '10kb' })); // Body limit is 10kb
@@ -39,14 +40,15 @@ app.use(mongoSanitize());
 // Data sanitization against XSS
 app.use(xss());
 
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/subjects', subjectRoutes);
-app.use('/api/questions', questionRoutes);
-app.use('/api/tests', testRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/performance', performanceRoutes);
+// Routes without /api prefix
+app.use('/auth', authRoutes);
+app.use('/subjects', subjectRoutes);
+app.use('/questions', questionRoutes);
+app.use('/tests', testRoutes);
+app.use('/users', userRoutes);
+app.use('/dashboard', dashboardRoutes);
+app.use('/performance', performanceRoutes);
+app.use('/admin', adminRoutes);
 
 // Handle undefined routes
 app.all('*', (req, res, next) => {

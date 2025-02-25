@@ -4,7 +4,7 @@ const pool = mysql.createPool({
   host: 'localhost',
   user: 'root',
   password: 'login@2021',
-  database: 'gpat_pyq_db',
+  database: 'pharma_prep',
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,

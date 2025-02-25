@@ -16,8 +16,9 @@ const ProtectedLayout = ({
     );
   }
 
+  // For admin routes, check both authentication and admin status
   if (!isAuthenticated || (isAdmin && !isAdmin)) {
-    return <Navigate to={redirectPath} />;
+    return <Navigate to={redirectPath} replace />;
   }
 
   return (

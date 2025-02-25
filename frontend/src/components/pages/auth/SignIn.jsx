@@ -21,13 +21,12 @@ const SignIn = () => {
 
   const formik = useFormik({
     initialValues: {
-      email: '',
+      userId: '',
       password: '',
     },
     validationSchema: Yup.object({
-      email: Yup.string()
-        .email('Invalid email address')
-        .required('Email is required'),
+      userId: Yup.string()
+        .required('Username or Email is required'),
       password: Yup.string()
         .required('Password is required'),
     }),
@@ -69,13 +68,13 @@ const SignIn = () => {
           <form onSubmit={formik.handleSubmit}>
             <TextField
               fullWidth
-              id="email"
-              name="email"
-              label="Email Address"
-              value={formik.values.email}
+              id="userId"
+              name="userId"
+              label="Username or Email"
+              value={formik.values.userId}
               onChange={formik.handleChange}
-              error={formik.touched.email && Boolean(formik.errors.email)}
-              helperText={formik.touched.email && formik.errors.email}
+              error={formik.touched.userId && Boolean(formik.errors.userId)}
+              helperText={formik.touched.userId && formik.errors.userId}
               margin="normal"
             />
             <TextField

@@ -37,19 +37,12 @@ import Contact from './components/pages/public/Contact';
 // Auth Provider
 import { AuthProvider, useAuth } from './hooks/useAuth';
 
-const App = () => {
-  return (
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
-    </ThemeProvider>
-  );
-};
-
-const AppContent = () => {
+const AppRoutes = () => {
   const { isAuthenticated, isAdmin, loading } = useAuth();
+
+  if (loading) {
+    return null; // Or a loading spinner
+  }
 
   return (
     <>
@@ -87,7 +80,7 @@ const AppContent = () => {
           element={
             <ProtectedLayout 
               isAuthenticated={isAuthenticated} 
-              isAdmin={true}
+              isAdmin={isAdmin}
               isLoading={loading}
               redirectPath="/dashboard"
             />
@@ -99,9 +92,20 @@ const AppContent = () => {
         </Route>
 
         {/* Catch all route */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </>
+  );
+};
+
+const App = () => {
+  return (
+    <AuthProvider>
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <AppRoutes />
+      </ThemeProvider>
+    </AuthProvider>
   );
 };
 

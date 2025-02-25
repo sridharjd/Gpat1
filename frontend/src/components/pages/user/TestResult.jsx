@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Container,
@@ -31,8 +31,13 @@ const TestResult = () => {
   const navigate = useNavigate();
   const result = location.state?.result;
 
+  useEffect(() => {
+    if (!result) {
+      navigate('/dashboard');
+    }
+  }, [result, navigate]);
+
   if (!result) {
-    navigate('/dashboard');
     return null;
   }
 
@@ -40,9 +45,9 @@ const TestResult = () => {
     score,
     totalQuestions,
     correctAnswers,
-    wrongAnswers,
+    incorrectAnswers,
     timeSpent,
-    subjectWiseAnalysis,
+    questions
   } = result;
 
   const formatTime = (seconds) => {
@@ -54,6 +59,25 @@ const TestResult = () => {
   const calculatePercentage = (value, total) => {
     return ((value / total) * 100).toFixed(1);
   };
+
+  // Calculate subject-wise analysis
+  const subjectWiseAnalysis = questions ? Object.values(questions.reduce((acc, q) => {
+    const subject = q.subject_name;
+    if (!acc[subject]) {
+      acc[subject] = {
+        name: subject,
+        correct: 0,
+        total: 0,
+        score: 0
+      };
+    }
+    acc[subject].total += 1;
+    if (q.isCorrect) {
+      acc[subject].correct += 1;
+    }
+    acc[subject].score = calculatePercentage(acc[subject].correct, acc[subject].total);
+    return acc;
+  }, {})) : [];
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
@@ -69,7 +93,7 @@ const TestResult = () => {
               <Box sx={{ position: 'relative', display: 'inline-flex' }}>
                 <CircularProgress
                   variant="determinate"
-                  value={score}
+                  value={parseFloat(score) || 0}
                   size={100}
                   thickness={4}
                   color={score >= 70 ? 'success' : score >= 40 ? 'warning' : 'error'}
@@ -87,7 +111,7 @@ const TestResult = () => {
                   }}
                 >
                   <Typography variant="h6" component="div">
-                    {score}%
+                    {score?.toFixed(1) || 0}%
                   </Typography>
                 </Box>
               </Box>
@@ -114,7 +138,7 @@ const TestResult = () => {
                   <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
                     <WrongIcon color="error" sx={{ mr: 1 }} />
                     <Typography>
-                      Wrong: {wrongAnswers} ({calculatePercentage(wrongAnswers, totalQuestions)}%)
+                      Wrong: {incorrectAnswers} ({calculatePercentage(incorrectAnswers, totalQuestions)}%)
                     </Typography>
                   </Box>
                 </Grid>
@@ -141,52 +165,49 @@ const TestResult = () => {
       </Grid>
 
       {/* Subject-wise Analysis */}
-      <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>
-        Subject-wise Analysis
-      </Typography>
-      <Grid container spacing={3}>
-        {subjectWiseAnalysis.map((subject, index) => (
-          <Grid item xs={12} md={6} key={index}>
-            <Card>
-              <CardContent>
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                  <SubjectIcon color="primary" sx={{ mr: 1 }} />
-                  <Typography variant="h6">
-                    {subject.name}
-                  </Typography>
-                </Box>
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                  <Box sx={{ flexGrow: 1, mr: 2 }}>
-                    <LinearProgress
-                      variant="determinate"
-                      value={subject.score}
-                      color={subject.score >= 70 ? 'success' : subject.score >= 40 ? 'warning' : 'error'}
-                    />
-                  </Box>
-                  <Typography variant="body2">
-                    {subject.score}%
-                  </Typography>
-                </Box>
-                <Typography variant="body2" color="text.secondary">
-                  {subject.correct} correct out of {subject.total} questions
-                </Typography>
-              </CardContent>
-            </Card>
+      {subjectWiseAnalysis.length > 0 && (
+        <>
+          <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>
+            Subject-wise Analysis
+          </Typography>
+          <Grid container spacing={3}>
+            {subjectWiseAnalysis.map((subject, index) => (
+              <Grid item xs={12} md={6} key={index}>
+                <Card>
+                  <CardContent>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                      <SubjectIcon color="primary" sx={{ mr: 1 }} />
+                      <Typography variant="h6">
+                        {subject.name}
+                      </Typography>
+                    </Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                      <Box sx={{ flexGrow: 1, mr: 2 }}>
+                        <LinearProgress
+                          variant="determinate"
+                          value={parseFloat(subject.score) || 0}
+                          color={subject.score >= 70 ? 'success' : subject.score >= 40 ? 'warning' : 'error'}
+                        />
+                      </Box>
+                      <Typography variant="body2">
+                        {subject.score}%
+                      </Typography>
+                    </Box>
+                    <Typography variant="body2" color="text.secondary">
+                      {subject.correct} correct out of {subject.total} questions
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+            ))}
           </Grid>
-        ))}
-      </Grid>
+        </>
+      )}
 
       {/* Action Buttons */}
       <Box sx={{ mt: 4, display: 'flex', justifyContent: 'center', gap: 2 }}>
         <Button
           variant="contained"
-          onClick={() => navigate('/test-history')}
-        >
-          View Test History
-        </Button>
-        <Button
-          variant="contained"
-          color="primary"
           onClick={() => navigate('/dashboard')}
         >
           Back to Dashboard

@@ -9,23 +9,27 @@ const generateToken = (payload, expiresIn = '1h') => {
 
 // Sign In Function
 const signIn = async (req, res) => {
-  const { email, password } = req.body;
+  const { userId, password } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ message: 'Email and password are required' });
+  if (!userId || !password) {
+    return res.status(400).json({ message: 'Username/Email and password are required' });
   }
 
   try {
-    const [user] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+    // Check if the userId is an email or username
+    const [user] = await db.query(
+      'SELECT * FROM users WHERE email = ? OR username = ?', 
+      [userId, userId]
+    );
 
     if (!user.length) {
-      return res.status(400).json({ message: 'Invalid email or password' });
+      return res.status(400).json({ message: 'Invalid credentials' });
     }
 
     const isMatch = await bcrypt.compare(password, user[0].password);
 
     if (!isMatch) {
-      return res.status(400).json({ message: 'Invalid email or password' });
+      return res.status(400).json({ message: 'Invalid credentials' });
     }
 
     const token = generateToken({ 
