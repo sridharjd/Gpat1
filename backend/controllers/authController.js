@@ -2,70 +2,139 @@ const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
+// Helper function to generate tokens
+const generateToken = (payload, expiresIn = '1h') => {
+  return jwt.sign(payload, process.env.JWT_SECRET || 'your_secret_key', { expiresIn });
+};
+
 // Sign In Function
 const signIn = async (req, res) => {
-  const { username, password } = req.body;
+  const { email, password } = req.body;
 
-  if (!username || !password) {
-    return res.status(400).json({ message: 'Username and password are required' });
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Email and password are required' });
   }
 
   try {
-    const [user] = await db.query('SELECT * FROM users WHERE username = ?', [username]);
+    const [user] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
 
     if (!user.length) {
-      return res.status(400).json({ message: 'Invalid username or password' });
+      return res.status(400).json({ message: 'Invalid email or password' });
     }
 
     const isMatch = await bcrypt.compare(password, user[0].password);
 
     if (!isMatch) {
-      return res.status(400).json({ message: 'Invalid username or password' });
+      return res.status(400).json({ message: 'Invalid email or password' });
     }
 
-    const token = jwt.sign({ id: user[0].id, isAdmin: user[0].is_admin }, 'your_secret_key', {
-      expiresIn: '1h',
+    const token = generateToken({ 
+      id: user[0].id, 
+      isAdmin: user[0].is_admin 
     });
+
+    // Update last login
+    await db.query('UPDATE users SET last_login = NOW() WHERE id = ?', [user[0].id]);
 
     res.json({
       token,
-      username: user[0].username,
-      isAdmin: user[0].is_admin,
-      user_id: user[0].id, // Include user_id in the response
+      user: {
+        id: user[0].id,
+        username: user[0].username,
+        firstName: user[0].first_name,
+        lastName: user[0].last_name,
+        email: user[0].email,
+        isAdmin: user[0].is_admin,
+      }
     });
   } catch (error) {
+    console.error('Sign in error:', error);
     res.status(500).json({ message: 'Error signing in' });
   }
 };
 
 // Sign Up Function
 const signUp = async (req, res) => {
-  const { username, password } = req.body;
+  const { username, email, password, firstName, lastName, phoneNumber } = req.body;
 
-  if (!username || !password) {
-    return res.status(400).json({ message: 'Username and password are required' });
+  if (!username || !email || !password || !firstName || !lastName) {
+    return res.status(400).json({ message: 'All required fields must be provided' });
   }
 
   try {
-    const [existingUser] = await db.query('SELECT * FROM users WHERE username = ?', [username]);
+    // Check for existing user
+    const [existingUser] = await db.query(
+      'SELECT * FROM users WHERE email = ? OR username = ?', 
+      [email, username]
+    );
 
     if (existingUser.length > 0) {
-      return res.status(400).json({ message: 'Username already exists' });
+      const field = existingUser[0].email === email ? 'email' : 'username';
+      return res.status(400).json({ message: `This ${field} is already registered` });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, 12);
 
-    await db.query('INSERT INTO users (username, password, is_admin) VALUES (?, ?, ?)', [
-      username,
-      hashedPassword,
-      0, // Default to non-admin user
-    ]);
+    // Create user
+    const [result] = await db.query(
+      `INSERT INTO users (username, email, password, first_name, last_name, phone_number, is_verified) 
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [username, email, hashedPassword, firstName, lastName, phoneNumber, true]
+    );
 
-    res.status(201).json({ message: 'User created successfully' });
+    const token = generateToken({ 
+      id: result.insertId,
+      isAdmin: false
+    });
+
+    res.status(201).json({
+      message: 'User registered successfully',
+      token,
+      user: {
+        id: result.insertId,
+        username,
+        firstName,
+        lastName,
+        email,
+        isAdmin: false
+      }
+    });
   } catch (error) {
-    console.error('Error creating user:', error);
-    res.status(500).json({ message: 'Error creating user', error: error.message });
+    console.error('Sign up error:', error);
+    res.status(500).json({ message: 'Error registering user' });
   }
 };
 
-module.exports = { signIn, signUp };
+// Get Current User
+const getCurrentUser = async (req, res) => {
+  try {
+    const [user] = await db.query(
+      'SELECT id, username, email, first_name, last_name, is_admin FROM users WHERE id = ?',
+      [req.user.id]
+    );
+
+    if (!user.length) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json({
+      user: {
+        id: user[0].id,
+        username: user[0].username,
+        firstName: user[0].first_name,
+        lastName: user[0].last_name,
+        email: user[0].email,
+        isAdmin: user[0].is_admin
+      }
+    });
+  } catch (error) {
+    console.error('Get current user error:', error);
+    res.status(500).json({ message: 'Error getting user information' });
+  }
+};
+
+module.exports = { 
+  signIn, 
+  signUp, 
+  getCurrentUser
+};

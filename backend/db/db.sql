@@ -5,9 +5,12 @@ USE gpat_pyq_db;
 -- Users Table
 CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    username VARCHAR(50) NOT NULL UNIQUE,
+    username VARCHAR(255) NOT NULL UNIQUE,
     password VARCHAR(255) NOT NULL,
-    is_admin BOOLEAN DEFAULT 0,
+    email VARCHAR(255) UNIQUE,
+    phone_number VARCHAR(20),
+    bio TEXT,
+    is_admin BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
@@ -53,11 +56,12 @@ CREATE TABLE IF NOT EXISTS user_responses (
 -- User Performance Table
 CREATE TABLE IF NOT EXISTS user_performance (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
+    username VARCHAR(255) NOT NULL,
     score INT NOT NULL,
     total_questions INT NOT NULL,
-    test_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    duration INT DEFAULT 30,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
 );
 
 -- Insert Sample Data
@@ -81,3 +85,7 @@ INSERT INTO pyq_questions (year, subject_id, question, answer, option1, option2,
 (2023, 1, 'What is the significance of the Noyes-Whitney equation?', 'Describes drug dissolution rate', 'Describes drug dissolution rate', 'Describes drug absorption rate', 'Describes drug excretion rate', 'Describes drug metabolism rate', 'Both'),
 (2023, 2, 'Which drug is used as an anticoagulant?', 'Warfarin', 'Warfarin', 'Propranolol', 'Losartan', 'Omeprazole', 'Both'),
 (2023, 3, 'Which plant is the source of the cardiac glycoside digoxin?', 'Digitalis lanata', 'Digitalis lanata', 'Cinchona bark', 'Aloe vera', 'Turmeric', 'Both');
+
+-- Insert default admin user (password: admin123)
+INSERT INTO users (username, password, email, is_admin) 
+VALUES ('admin', '$2b$10$5dwsS5snIRlKu8ka5r5UxOB0ABjr5MQHGkd4cRE/nJBLU5CsXqk5m', 'admin@example.com', TRUE);

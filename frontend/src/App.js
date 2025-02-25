@@ -1,70 +1,108 @@
-import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
-import Navbar from './components/Navbar';
-import Dashboard from './components/Dashboard';
-import MCQTest from './components/MCQTest';
-import TestResult from './components/TestResult';
-import Performance from './components/Performance';
-import SignIn from './components/SignIn';
-import SignUp from './components/SignUp';
-import AdminDashboard from './components/AdminDashboard';
-import ManageUsers from './components/ManageUsers';
-import ManageQuestions from './components/ManageQuestions';
-import EditUser from './components/EditUser';
-import EditQuestion from './components/EditQuestion';
-import './App.css';
+import React from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { ThemeProvider } from '@mui/material/styles';
+import CssBaseline from '@mui/material/CssBaseline';
+import theme from './theme';
 
-function App() {
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [username, setUsername] = useState('');
-  const [user_id, setUserId] = useState(null);
+// Layout Components
+import Navbar from './components/layout/Navbar';
+import ProtectedLayout from './components/layout/ProtectedLayout';
 
-  // Check if the user is already authenticated (e.g., from local storage)
-  useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      // Fetch user details from the backend using the token
-      // Example: Call an API to validate the token and get user details
-      // setUsername(response.username);
-      // setIsAdmin(response.isAdmin);
-      // setUserId(response.user_id);
-    }
-  }, []);
+// Auth Pages
+import SignIn from './components/pages/auth/SignIn';
+import SignUp from './components/pages/auth/SignUp';
+import VerifyEmail from './components/pages/auth/VerifyEmail';
+
+// User Pages
+import UserDashboard from './components/pages/user/Dashboard';
+import Performance from './components/pages/user/Performance';
+import TestResult from './components/pages/user/TestResult';
+import TestHistory from './components/pages/user/TestHistory';
+import MCQTest from './components/pages/user/MCQTest';
+import Profile from './components/pages/user/Profile';
+import Settings from './components/pages/user/Settings';
+
+// Admin Pages
+import AdminDashboard from './components/pages/admin/Dashboard';
+import ManageUsers from './components/pages/admin/ManageUsers';
+import UploadQuestions from './components/pages/admin/UploadQuestions';
+
+// Public Pages
+import Home from './components/pages/public/Home';
+import ExamInfo from './components/pages/public/ExamInfo';
+import Syllabus from './components/pages/public/Syllabus';
+import About from './components/pages/public/About';
+import Contact from './components/pages/public/Contact';
+
+// Auth Provider
+import { AuthProvider, useAuth } from './hooks/useAuth';
+
+const App = () => {
+  return (
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </ThemeProvider>
+  );
+};
+
+const AppContent = () => {
+  const { isAuthenticated, isAdmin, loading } = useAuth();
 
   return (
-    <Router>
-      <Navbar
-        username={username}
-        isAdmin={isAdmin}
-        setUsername={setUsername}
-        setIsAdmin={setIsAdmin}
-        setUserId={setUserId}
-      />
+    <>
+      <Navbar />
       <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/test" element={<MCQTest user_id={user_id} />} />
-        <Route path="/test-result" element={<TestResult />} />
-        <Route path="/performance" element={<Performance user_id={user_id} />} />
-        <Route
-          path="/signin"
+        {/* Public Routes */}
+        <Route path="/" element={<Home />} />
+        <Route path="/exam-info" element={<ExamInfo />} />
+        <Route path="/syllabus" element={<Syllabus />} />
+        <Route path="/about" element={<About />} />
+        <Route path="/contact" element={<Contact />} />
+        
+        {/* Auth Routes */}
+        <Route path="/signin" element={
+          isAuthenticated ? <Navigate to={isAdmin ? "/admin/dashboard" : "/dashboard"} /> : <SignIn />
+        } />
+        <Route path="/signup" element={
+          isAuthenticated ? <Navigate to={isAdmin ? "/admin/dashboard" : "/dashboard"} /> : <SignUp />
+        } />
+        <Route path="/verify-email/:token" element={<VerifyEmail />} />
+
+        {/* User Routes */}
+        <Route element={<ProtectedLayout isAuthenticated={isAuthenticated} isLoading={loading} />}>
+          <Route path="/dashboard" element={<UserDashboard />} />
+          <Route path="/test" element={<MCQTest />} />
+          <Route path="/performance" element={<Performance />} />
+          <Route path="/test-result" element={<TestResult />} />
+          <Route path="/test-history" element={<TestHistory />} />
+          <Route path="/profile" element={<Profile />} />
+          <Route path="/settings" element={<Settings />} />
+        </Route>
+
+        {/* Admin Routes */}
+        <Route 
           element={
-            <SignIn
-              setUsername={setUsername}
-              setIsAdmin={setIsAdmin}
-              setUserId={setUserId}
+            <ProtectedLayout 
+              isAuthenticated={isAuthenticated} 
+              isAdmin={true}
+              isLoading={loading}
+              redirectPath="/dashboard"
             />
           }
-        />
-        <Route path="/signup" element={<SignUp />} />
-        <Route path="/admin/dashboard" element={<AdminDashboard />} />
-        <Route path="/admin/manage-users" element={<ManageUsers />} />
-        <Route path="/admin/manage-questions" element={<ManageQuestions />} />
-        <Route path="/admin/edit-user/:id" element={<EditUser />} />
-        <Route path="/admin/edit-question/:id" element={<EditQuestion />} />
+        >
+          <Route path="/admin/dashboard" element={<AdminDashboard />} />
+          <Route path="/admin/users" element={<ManageUsers />} />
+          <Route path="/admin/upload-questions" element={<UploadQuestions />} />
+        </Route>
+
+        {/* Catch all route */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </Router>
+    </>
   );
-}
+};
 
 export default App;

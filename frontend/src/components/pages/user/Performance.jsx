@@ -10,7 +10,7 @@ import {
   Tooltip,
   Legend,
 } from 'chart.js';
-import { fetchPerformance } from '../api';
+import api from '../../../services/api';
 
 ChartJS.register(
   CategoryScale,
@@ -31,7 +31,9 @@ const Performance = ({ user_id }) => {
   useEffect(() => {
     const loadPerformance = async () => {
       try {
-        const data = await fetchPerformance(user_id);
+        const response = await api.get(`/performance/${user_id}`);
+        const data = response.data;
+        
         setPerformanceData({
           labels: data.performance.map((entry) => new Date(entry.test_date).toLocaleDateString()),
           datasets: [

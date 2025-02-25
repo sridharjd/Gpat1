@@ -4,15 +4,24 @@ const getPerformance = async (req, res) => {
   const { user_id } = req.query;
 
   if (!user_id) {
-    return res.status(400).json({ message: 'User ID is required' });
+    return res.status(400).json({
+      success: false,
+      message: 'User ID is required'
+    });
   }
 
   try {
-    // Fetch performance data for the user
+    console.log(`Fetching performance data for user ${user_id}`);
+    
+    // Fetch overall performance data
     const [performance] = await db.query(
       'SELECT score, total_questions, test_date FROM user_performance WHERE user_id = ? ORDER BY test_date DESC',
       [user_id]
     );
+
+    if (!performance) {
+      throw new Error('Failed to fetch performance data');
+    }
 
     // Fetch subject-wise performance data
     const [subjectPerformance] = await db.query(
@@ -27,10 +36,20 @@ const getPerformance = async (req, res) => {
       [user_id]
     );
 
-    res.json({ performance, subjectPerformance });
+    res.json({
+      success: true,
+      data: {
+        overall: performance,
+        bySubject: subjectPerformance
+      }
+    });
   } catch (error) {
     console.error('Error fetching performance data:', error);
-    res.status(500).json({ message: 'Error fetching performance data' });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch performance data',
+      error: error.message
+    });
   }
 };
 
