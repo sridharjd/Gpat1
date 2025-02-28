@@ -25,7 +25,7 @@ import {
   Delete as DeleteIcon,
   Add as AddIcon,
 } from '@mui/icons-material';
-import api from '../../../services/api';
+import apiService from '../../../services/api';
 
 const ManageUsers = () => {
   const [users, setUsers] = useState([]);
@@ -36,23 +36,22 @@ const ManageUsers = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const response = await apiService.admin.getUsers();
+        if (!response.data.success) {
+          throw new Error(response.data.message || 'Failed to fetch users');
+        }
+        setUsers(response.data.data);
+      } catch (error) {
+        console.error('Error fetching users:', error);
+        setError('Failed to fetch users.');
+      } finally {
+        setLoading(false);
+      }
+    };
     fetchUsers();
   }, []);
-
-  const fetchUsers = async () => {
-    try {
-      const response = await api.get('/admin/users');
-      if (!response.data.success) {
-        throw new Error(response.data.message || 'Failed to fetch users');
-      }
-      setUsers(response.data.data);
-    } catch (err) {
-      setError('Failed to fetch users');
-      console.error('Error fetching users:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleDeleteClick = (user) => {
     setSelectedUser(user);
@@ -61,13 +60,13 @@ const ManageUsers = () => {
 
   const handleDeleteConfirm = async () => {
     try {
-      await api.delete(`/admin/users/${selectedUser._id}`);
+      await apiService.admin.deleteUser(selectedUser._id);
       setUsers(users.filter(user => user._id !== selectedUser._id));
       setDeleteDialogOpen(false);
       setSelectedUser(null);
-    } catch (err) {
-      setError('Failed to delete user');
-      console.error('Error deleting user:', err);
+    } catch (error) {
+      console.error('Error deleting user:', error);
+      setError('Failed to delete user.');
     }
   };
 

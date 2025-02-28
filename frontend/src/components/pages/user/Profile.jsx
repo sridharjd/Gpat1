@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Container,
   Paper,
@@ -11,8 +11,8 @@ import {
   Alert,
   CircularProgress
 } from '@mui/material';
-import { useAuth } from '../../../contexts/AuthContext';
-import api from '../../../services/api';
+import { useAuth } from '../../../hooks/useAuth';
+import apiService from '../../../services/api';
 
 const Profile = () => {
   const { user, updateUser } = useAuth();
@@ -33,55 +33,27 @@ const Profile = () => {
     });
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
     setLoading(true);
-    setError('');
-    setSuccess('');
-
     try {
-      const response = await api.put('/users/profile', formData);
-      updateUser(response.data);
-      setSuccess('Profile updated successfully');
-    } catch (err) {
-      setError(err.response?.data?.message || 'Error updating profile');
+      await updateUser(formData);
+      setSuccess('Profile updated successfully!');
+      console.log('Profile updated successfully');
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      setError('Failed to update profile. Please try again later.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <Container maxWidth="md" sx={{ mt: 4, mb: 4 }}>
-      <Paper elevation={3} sx={{ p: 4 }}>
-        <Box display="flex" flexDirection="column" alignItems="center" mb={4}>
-          <Avatar
-            sx={{
-              width: 100,
-              height: 100,
-              mb: 2,
-              bgcolor: 'primary.main',
-              fontSize: '2.5rem'
-            }}
-          >
-            {user?.username?.[0]?.toUpperCase()}
-          </Avatar>
-          <Typography variant="h5" gutterBottom>
-            {user?.username}
-          </Typography>
-        </Box>
-
-        {error && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            {error}
-          </Alert>
-        )}
-
-        {success && (
-          <Alert severity="success" sx={{ mb: 2 }}>
-            {success}
-          </Alert>
-        )}
-
+    <Container>
+      <Paper>
+        <Typography variant="h4">Profile</Typography>
+        {error && <Alert severity="error">{error}</Alert>}
+        {success && <Alert severity="success">{success}</Alert>}
         <form onSubmit={handleSubmit}>
           <Grid container spacing={3}>
             <Grid item xs={12} sm={6}>
@@ -101,7 +73,6 @@ const Profile = () => {
                 name="email"
                 type="email"
                 value={formData.email}
-                onChange={handleChange}
                 disabled
                 helperText="Email cannot be changed"
               />
@@ -118,7 +89,6 @@ const Profile = () => {
             </Grid>
             <Grid item xs={12}>
               <TextField
-                fullWidth
                 label="Bio"
                 name="bio"
                 multiline

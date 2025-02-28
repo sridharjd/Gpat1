@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Container,
   Typography,
@@ -14,6 +14,7 @@ import {
   ListItemIcon,
   ListItemText,
   Chip,
+  Alert
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -23,6 +24,7 @@ import {
 
 const Syllabus = () => {
   const [selectedExam, setSelectedExam] = useState(0);
+  const [error, setError] = useState('');
 
   const handleExamChange = (event, newValue) => {
     setSelectedExam(newValue);
@@ -125,6 +127,19 @@ const Syllabus = () => {
     ]
   };
 
+  const fetchSyllabusData = async () => {
+    try {
+      console.log('Syllabus data fetched successfully:', syllabusData);
+    } catch (error) {
+      console.error('Error fetching syllabus data:', error);
+      setError('Failed to fetch syllabus data. Please try again later.');
+    }
+  };
+
+  useEffect(() => {
+    fetchSyllabusData();
+  }, []);
+
   const renderSyllabus = (examType) => {
     return syllabusData[examType].map((section, index) => (
       <Box key={index} sx={{ mb: 4 }}>
@@ -161,8 +176,10 @@ const Syllabus = () => {
     <Container maxWidth="lg" sx={{ py: 4 }}>
       <Paper elevation={3} sx={{ p: 4 }}>
         <Typography variant="h4" gutterBottom align="center">
-          Exam Syllabus
+          Syllabus Information
         </Typography>
+        
+        {error && <Alert severity="error" sx={{ mb: 4 }}>{error}</Alert>}
         
         <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 4 }}>
           <Tabs

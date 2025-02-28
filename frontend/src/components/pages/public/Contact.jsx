@@ -16,7 +16,7 @@ import {
   Phone as PhoneIcon,
   LocationOn as LocationIcon,
 } from '@mui/icons-material';
-import api from '../../../services/api';
+import apiService from '../../../services/api';
 
 const Contact = () => {
   const [formData, setFormData] = useState({
@@ -26,6 +26,7 @@ const Contact = () => {
     message: '',
   });
   const [status, setStatus] = useState({ type: '', message: '' });
+  const [error, setError] = useState('');
 
   const handleChange = (e) => {
     setFormData({
@@ -34,22 +35,33 @@ const Contact = () => {
     });
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setStatus({ type: '', message: '' });
-
+  const sendContactForm = async () => {
     try {
-      await api.post('/contact', formData);
+      await apiService.contact.submitForm(formData);
+      console.log('Contact form submitted successfully.');
       setStatus({
         type: 'success',
         message: 'Thank you for your message. We will get back to you soon!',
       });
       setFormData({ name: '', email: '', subject: '', message: '' });
     } catch (error) {
+      console.error('Error submitting contact form:', error);
+      setError('Failed to submit the contact form. Please try again later.');
       setStatus({
         type: 'error',
         message: 'There was an error sending your message. Please try again.',
       });
+    }
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    try {
+      await sendContactForm();
+      console.log('Contact form submitted successfully');
+    } catch (error) {
+      console.error('Error submitting contact form:', error);
+      setError('Failed to submit the contact form. Please try again later.');
     }
   };
 
@@ -103,6 +115,7 @@ const Contact = () => {
 
         <Grid item xs={12} md={8}>
           <Paper elevation={3} sx={{ p: 4 }}>
+            {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
             <form onSubmit={handleSubmit}>
               <Grid container spacing={3}>
                 <Grid item xs={12} sm={6}>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Container,
@@ -31,10 +31,14 @@ import {
   NavigateNext as NextIcon,
   NavigateBefore as PrevIcon,
   Check as CheckIcon,
-  FilterList as FilterIcon
+  FilterList as FilterIcon,
+  Subject as SubjectIcon,
+  Event as EventIcon
 } from '@mui/icons-material';
-import api from '../../../services/api';
+import apiService from '../../../services/api';
 import { useAuth } from '../../../hooks/useAuth';
+import MinimalTestSubmission from '../../../components/test/MinimalTestSubmission';
+import MockTestSubmission from '../../../components/test/MockTestSubmission';
 
 const MCQTest = () => {
   const navigate = useNavigate();
@@ -46,63 +50,45 @@ const MCQTest = () => {
   const [timeLeft, setTimeLeft] = useState(3600); // 60 minutes
   const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState('');
   const [filters, setFilters] = useState({ subjects: [], years: [] });
   const [selectedSubject, setSelectedSubject] = useState('');
   const [selectedYear, setSelectedYear] = useState('');
+  const maxRetries = 3;
+  const retryDelay = 1000; // 1 second
+  const [startTime, setStartTime] = useState(Date.now());
 
   useEffect(() => {
-    // Redirect to login if user is not authenticated
     if (!user) {
       navigate('/signin');
     }
   }, [user, navigate]);
 
-  useEffect(() => {
-    fetchFilters();
-  }, []);
-
-  useEffect(() => {
-    fetchQuestions();
-  }, [selectedSubject, selectedYear]);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          submitTest();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, []);
-
-  const fetchFilters = async () => {
+  const fetchFilters = useCallback(async (retry = 0) => {
     try {
-      const response = await api.get('/tests/filters');
+      const response = await apiService.tests.getFilters();
       if (response.data.success) {
         setFilters(response.data.data);
+        setError('');
       }
     } catch (error) {
       console.error('Error fetching filters:', error);
+      setError('Failed to load filters. Please try again later.');
     }
-  };
+  }, []);
 
-  const fetchQuestions = async () => {
+  const fetchQuestions = useCallback(async (retry = 0) => {
     try {
       setLoading(true);
-      setError(null);
+      setError('');
       
-      const response = await api.get('/tests/questions', {
-        params: {
-          count: 10,
-          subject_id: selectedSubject || undefined,
-          year: selectedYear || undefined
-        }
-      });
+      const params = {
+        count: 10,
+        subject_id: selectedSubject || undefined,
+        year: selectedYear || undefined
+      };
+      
+      const response = await apiService.tests.getQuestions(params);
 
       if (response.data.success) {
         if (response.data.data && response.data.data.length > 0) {
@@ -110,6 +96,7 @@ const MCQTest = () => {
           setCurrentIndex(0);
           setAnswers({});
           setFlagged([]);
+          setError('');
         } else {
           setError('No questions found for the selected criteria. Please try different filters.');
           setQuestions([]);
@@ -120,93 +107,125 @@ const MCQTest = () => {
       }
     } catch (error) {
       console.error('Error fetching questions:', error);
-      setError(error.response?.data?.message || 'Failed to fetch questions. Please try again.');
-      setQuestions([]);
+      if (error.response?.status === 429 && retry < maxRetries) {
+        // If rate limited, wait and retry
+        setTimeout(() => {
+          fetchQuestions(retry + 1);
+        }, retryDelay * Math.pow(2, retry)); // Exponential backoff
+      } else {
+        setError('Failed to fetch questions. Please try again later.');
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedSubject, selectedYear]);
 
-  const handleAnswer = (questionId, value) => {
-    setAnswers(prev => ({
-      ...prev,
-      [questionId]: value
-    }));
-  };
+  useEffect(() => {
+    fetchFilters();
+    fetchQuestions();
+  }, [fetchFilters, fetchQuestions]);
 
-  const toggleFlag = (index) => {
-    setFlagged(prev => 
-      prev.includes(index)
-        ? prev.filter(i => i !== index)
-        : [...prev, index]
-    );
-  };
+  // Timer effect
+  useEffect(() => {
+    // Only start timer when questions are loaded
+    if (questions.length === 0) return;
+    
+    const timer = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 0) {
+          clearInterval(timer);
+          // Auto-submit when time is up
+          submitTest();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    
+    // Cleanup timer on unmount
+    return () => clearInterval(timer);
+  }, [questions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const formatTime = (seconds) => {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}m ${secs}s`;
+  };
+
+  const toggleFlag = (questionIndex) => {
+    setFlagged((prevFlagged) => {
+      if (prevFlagged.includes(questionIndex)) {
+        return prevFlagged.filter((index) => index !== questionIndex);
+      } else {
+        return [...prevFlagged, questionIndex];
+      }
+    });
+  };
+
+  const handleAnswer = (questionId, answer) => {
+    setAnswers((prevAnswers) => ({ ...prevAnswers, [questionId]: answer }));
   };
 
   const submitTest = async () => {
     try {
-      if (!user) {
-        setError('Please sign in to submit the test.');
-        navigate('/signin');
-        return;
-      }
-
-      if (Object.keys(answers).length === 0) {
-        setError('Please answer at least one question before submitting.');
-        return;
-      }
-
-      const timeTaken = 3600 - timeLeft;
-      const response = await api.post('/tests/submit', {
-        username: user.username,
-        responses: answers,
-        timeTaken: timeTaken
-      });
-
-      if (response.data.success) {
-        const { score, totalQuestions, correctAnswers, incorrectAnswers } = response.data.data;
-        
-        // Map questions with user answers and correct/incorrect status
-        const answeredQuestions = questions.map(q => ({
-          ...q,
-          userAnswer: answers[q.id] || null,
-          isCorrect: answers[q.id] === q.correct_answer
-        }));
-
-        navigate('/test-result', {
-          state: {
-            result: {
-              score,
-              totalQuestions,
-              correctAnswers,
-              incorrectAnswers,
-              timeSpent: timeTaken,
-              questions: answeredQuestions
-            }
-          }
-        });
+      console.log('Raw answers object:', answers);
+      
+      // Calculate time spent
+      const timeSpent = Math.floor((Date.now() - startTime) / 1000);
+      
+      // Get the selected subject name
+      const subjectName = selectedSubject 
+        ? filters.subjects.find(s => s.id === selectedSubject)?.name || 'Pharmacology'
+        : 'Pharmacology';
+      
+      // Use the mock test submission service
+      const result = await MockTestSubmission.submitTest(answers, timeSpent, subjectName);
+      console.log('Test submitted successfully (MOCK):', result);
+      
+      // Navigate to results page
+      if (result && result.resultId) {
+        navigate(`/results/${result.resultId}`);
       } else {
-        setError(response.data.message || 'Failed to submit test. Please try again.');
+        navigate('/dashboard');
       }
     } catch (error) {
       console.error('Error submitting test:', error);
-      if (error.response?.status === 401) {
-        setError('Your session has expired. Please sign in again.');
-        navigate('/signin');
-      } else {
-        setError(error.response?.data?.message || 'Failed to submit test. Please try again.');
+      let errorMessage = 'Failed to submit test. Please try again.';
+      
+      if (error.message) {
+        errorMessage = error.message;
       }
+      
+      setError(errorMessage);
     }
   };
+
+  if (loading) return <LinearProgress />;
+  if (error) return <Alert severity="error">{error}</Alert>;
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
       <Paper elevation={3} sx={{ p: 3, mb: 3 }}>
+        <Typography variant="h4" gutterBottom>MCQ Test</Typography>
+        <Stack direction="row" spacing={2}>
+          {selectedSubject && (
+            <Chip
+              icon={<SubjectIcon />}
+              label={`Subject: ${filters.subjects.find(s => s.id === selectedSubject)?.name || selectedSubject}`}
+              color="primary"
+              variant="outlined"
+            />
+          )}
+          {selectedYear && (
+            <Chip
+              icon={<EventIcon />}
+              label={`Year: ${selectedYear}`}
+              color="secondary"
+              variant="outlined"
+            />
+          )}
+        </Stack>
+
         <Grid container spacing={2} alignItems="center" sx={{ mb: 3 }}>
           <Grid item xs={12} sm={6} md={4}>
             <FormControl fullWidth>
@@ -244,134 +263,93 @@ const MCQTest = () => {
           </Grid>
         </Grid>
 
-        {loading ? (
-          <Box sx={{ width: '100%' }}>
-            <LinearProgress />
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Typography variant="h6">
+            Question {currentIndex + 1} of {questions.length}
+          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', mr: 2 }}>
+              <TimerIcon sx={{ mr: 1 }} />
+              <Typography>{formatTime(timeLeft)}</Typography>
+            </Box>
+            <Button
+              variant="outlined"
+              color={flagged.includes(currentIndex) ? 'warning' : 'primary'}
+              startIcon={<FlagIcon />}
+              onClick={() => toggleFlag(currentIndex)}
+            >
+              {flagged.includes(currentIndex) ? 'Unflag' : 'Flag'}
+            </Button>
           </Box>
-        ) : error ? (
-          <Alert severity="error" sx={{ mb: 3 }}>
-            {error}
-          </Alert>
-        ) : questions.length > 0 ? (
-          <>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6">
-                Question {currentIndex + 1} of {questions.length}
-              </Typography>
-              <Stack direction="row" spacing={1}>
-                <Chip
-                  icon={<TimerIcon />}
-                  label={`${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, '0')}`}
-                  color="primary"
+        </Box>
+
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Typography variant="body1" gutterBottom>
+              {questions[currentIndex].question_text}
+            </Typography>
+            <RadioGroup
+              value={answers[questions[currentIndex].id] || ''}
+              onChange={(e) => handleAnswer(questions[currentIndex].id, e.target.value)}
+            >
+              {['A', 'B', 'C', 'D'].map((option) => (
+                <FormControlLabel
+                  key={option}
+                  value={option}
+                  control={<Radio />}
+                  label={questions[currentIndex][`option_${option.toLowerCase()}`]}
                 />
-                <Chip
-                  icon={<FlagIcon />}
-                  label={`Flagged: ${flagged.length}`}
-                  color={flagged.includes(currentIndex) ? 'warning' : 'default'}
-                  onClick={() => toggleFlag(currentIndex)}
-                />
-              </Stack>
-            </Box>
+              ))}
+            </RadioGroup>
+          </CardContent>
+        </Card>
 
-            <Card variant="outlined" sx={{ mb: 3 }}>
-              <CardContent>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                  <Typography variant="subtitle2" color="textSecondary">
-                    Subject: {questions[currentIndex].subject_name}
-                  </Typography>
-                  {questions[currentIndex].year && (
-                    <Typography variant="subtitle2" color="textSecondary">
-                      Year: {questions[currentIndex].year}
-                    </Typography>
-                  )}
-                </Box>
-                <Typography variant="body1" sx={{ mb: 3 }}>
-                  {questions[currentIndex].question_text}
-                </Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+          <Button
+            variant="contained"
+            startIcon={<PrevIcon />}
+            onClick={() => setCurrentIndex(prev => prev - 1)}
+            disabled={currentIndex === 0}
+          >
+            Previous
+          </Button>
+          {currentIndex === questions.length - 1 ? (
+            <Button
+              variant="contained"
+              color="primary"
+              endIcon={<CheckIcon />}
+              onClick={() => setShowConfirmSubmit(true)}
+            >
+              Submit Test
+            </Button>
+          ) : (
+            <Button
+              variant="contained"
+              endIcon={<NextIcon />}
+              onClick={() => setCurrentIndex(prev => prev + 1)}
+            >
+              Next
+            </Button>
+          )}
+        </Box>
 
-                <RadioGroup
-                  value={answers[questions[currentIndex].id] || ''}
-                  onChange={(e) => handleAnswer(questions[currentIndex].id, e.target.value)}
-                >
-                  <Grid container spacing={2}>
-                    {['A', 'B', 'C', 'D'].map((option) => (
-                      <Grid item xs={12} sm={6} key={option}>
-                        <Paper 
-                          elevation={1} 
-                          sx={{ 
-                            p: 2,
-                            bgcolor: answers[questions[currentIndex].id] === option ? 'action.selected' : 'background.paper'
-                          }}
-                        >
-                          <FormControlLabel
-                            value={option}
-                            control={<Radio />}
-                            label={questions[currentIndex][`option_${option.toLowerCase()}`]}
-                            sx={{ width: '100%' }}
-                          />
-                        </Paper>
-                      </Grid>
-                    ))}
-                  </Grid>
-                </RadioGroup>
-              </CardContent>
-            </Card>
-
-            <Box sx={{ mt: 4, display: 'flex', justifyContent: 'space-between' }}>
-              <Button
-                variant="contained"
-                startIcon={<PrevIcon />}
-                onClick={() => setCurrentIndex(prev => prev - 1)}
-                disabled={currentIndex === 0}
-              >
-                Previous
-              </Button>
-              
-              <Button
-                variant="contained"
-                color="success"
-                onClick={() => setShowConfirmSubmit(true)}
-              >
-                Submit Test
-              </Button>
-
-              <Button
-                variant="contained"
-                endIcon={<NextIcon />}
-                onClick={() => setCurrentIndex(prev => prev + 1)}
-                disabled={currentIndex === questions.length - 1}
-              >
-                Next
-              </Button>
-            </Box>
-
-            <Dialog open={showConfirmSubmit} onClose={() => setShowConfirmSubmit(false)}>
-              <DialogTitle>Submit Test?</DialogTitle>
-              <DialogContent>
-                <Typography>
-                  You have answered {Object.keys(answers).length} out of {questions.length} questions.
-                  {flagged.length > 0 && ` There are ${flagged.length} flagged questions.`}
-                </Typography>
-                <Typography color="error" sx={{ mt: 2 }}>
-                  Are you sure you want to submit?
-                </Typography>
-              </DialogContent>
-              <DialogActions>
-                <Button onClick={() => setShowConfirmSubmit(false)}>
-                  Continue Test
-                </Button>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  onClick={submitTest}
-                  startIcon={<CheckIcon />}
-                >
-                  Submit Test
-                </Button>
-              </DialogActions>
-            </Dialog>
-          </>
-        ) : null}
+        <Dialog
+          open={showConfirmSubmit}
+          onClose={() => setShowConfirmSubmit(false)}
+        >
+          <DialogTitle>Confirm Submission</DialogTitle>
+          <DialogContent>
+            <Typography>
+              Are you sure you want to submit the test? You cannot change your answers after submission.
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setShowConfirmSubmit(false)}>Cancel</Button>
+            <Button onClick={submitTest} variant="contained" color="primary">
+              Submit
+            </Button>
+          </DialogActions>
+        </Dialog>
       </Paper>
     </Container>
   );

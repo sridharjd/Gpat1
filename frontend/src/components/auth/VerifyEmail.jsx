@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Paper, Typography, Container, Alert, CircularProgress, Button } from '@mui/material';
-import api from '../../services/api';
+import apiService from '../../services/api';
 
 const VerifyEmail = () => {
   const [status, setStatus] = useState('verifying'); // verifying, success, error
   const [message, setMessage] = useState('');
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const token = searchParams.get('token');
 
   useEffect(() => {
-    const verifyToken = async () => {
+    const verifyEmailToken = async () => {
+      const token = searchParams.get('token');
+      
       if (!token) {
         setStatus('error');
         setMessage('Verification token is missing');
@@ -19,7 +20,7 @@ const VerifyEmail = () => {
       }
 
       try {
-        const response = await api.post('/auth/verify-email', { token });
+        const response = await apiService.auth.verifyEmail(token);
         setStatus('success');
         setMessage(response.data.message);
         
@@ -33,8 +34,8 @@ const VerifyEmail = () => {
       }
     };
 
-    verifyToken();
-  }, [token, navigate]);
+    verifyEmailToken();
+  }, [navigate, searchParams]);
 
   const renderContent = () => {
     switch (status) {

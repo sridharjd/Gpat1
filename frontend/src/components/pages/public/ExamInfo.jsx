@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Container,
   Typography,
@@ -14,6 +14,7 @@ import {
   Card,
   CardContent,
   CardActions,
+  Alert
 } from '@mui/material';
 import {
   DateRange as DateRangeIcon,
@@ -24,9 +25,12 @@ import {
   Info as InfoIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
+import apiService from '../../../services/api'; 
 
 const ExamInfo = () => {
   const navigate = useNavigate();
+  const [error, setError] = useState('');
+  const [examInfo, setExamInfo] = useState({});
 
   const examData = {
     gpat: {
@@ -80,6 +84,21 @@ const ExamInfo = () => {
       ]
     }
   };
+
+  const fetchExamInfo = async () => {
+    try {
+      const response = await apiService.exams.getInfo();
+      setExamInfo(response.data);
+      console.log('Exam info fetched successfully:', response.data);
+    } catch (error) {
+      setError('Failed to fetch exam info.');
+      console.error('Error fetching exam info:', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchExamInfo();
+  }, []);
 
   const ExamCard = ({ exam }) => (
     <Paper elevation={3} sx={{ p: 4, mb: 4 }}>
@@ -204,7 +223,9 @@ const ExamInfo = () => {
   );
 
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
+    <Container>
+      <Typography variant="h4">Exam Information</Typography>
+      {error && <Alert severity="error">{error}</Alert>}
       <Typography variant="h3" align="center" gutterBottom>
         Pharmacy Entrance Exams
       </Typography>

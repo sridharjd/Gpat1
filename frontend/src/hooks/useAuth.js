@@ -1,90 +1,184 @@
-import { useState, useEffect, createContext, useContext } from 'react';
-import api from '../services/api';
+import { useState, useEffect, createContext, useContext, useCallback } from 'react';
+import apiService from '../services/api';
 
 const AuthContext = createContext(null);
 
-export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
+// Check if user is already logged in from localStorage
+const getInitialAuthState = () => {
+  try {
     const token = localStorage.getItem('token');
-    if (token) {
-      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      checkAuthStatus();
-    } else {
-      setLoading(false);
+    const storedUser = localStorage.getItem('user');
+    
+    console.log('Initial auth state - token:', token);
+    console.log('Initial auth state - user:', storedUser);
+    
+    if (token && storedUser) {
+      try {
+        const user = JSON.parse(storedUser);
+        return {
+          isAuthenticated: true,
+          user,
+          token
+        };
+      } catch (e) {
+        console.error('Error parsing stored user:', e);
+      }
     }
-  }, []);
+    
+    // Clear any invalid data
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    
+    return {
+      isAuthenticated: false,
+      user: null,
+      token: null
+    };
+  } catch (error) {
+    console.error('Error retrieving auth state:', error);
+    // Clear any potentially corrupted data
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    return {
+      isAuthenticated: false,
+      user: null,
+      token: null
+    };
+  }
+};
+
+export const AuthProvider = ({ children }) => {
+  const initialState = getInitialAuthState();
+  const [isAuthenticated, setIsAuthenticated] = useState(initialState.isAuthenticated);
+  const [user, setUser] = useState(initialState.user);
+  const [loading, setLoading] = useState(false);
+  const [token, setToken] = useState(initialState.token);
+  const [error, setError] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(initialState.user?.isAdmin || false);
+
+  // Check auth status on mount and when token changes
+  useEffect(() => {
+    if (token) {
+      checkAuthStatus();
+    }
+  }, [token]);
 
   const checkAuthStatus = async () => {
+    if (!token) return false;
+    
     try {
-      const response = await api.get('/auth/me');
-      setUser(response.data.user);
+      setLoading(true);
+      
+      // Get the stored user
+      const storedUser = localStorage.getItem('user');
+      if (!storedUser) {
+        throw new Error('No user found');
+      }
+      
+      const user = JSON.parse(storedUser);
+      setUser(user);
+      setIsAuthenticated(true);
+      setIsAdmin(user.isAdmin);
+      setError(null);
+      return true;
     } catch (error) {
+      console.error('Auth check failed:', error);
+      // If the token is invalid, clear everything
       localStorage.removeItem('token');
-      delete api.defaults.headers.common['Authorization'];
+      localStorage.removeItem('user');
+      setToken(null);
+      setIsAuthenticated(false);
+      setUser(null);
+      setIsAdmin(false);
+      setError('Session expired. Please sign in again.');
+      return false;
     } finally {
       setLoading(false);
     }
   };
 
-  const login = async (token, userData) => {
-    try {
-      localStorage.setItem('token', token);
-      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      setUser(userData);
-      return { success: true };
-    } catch (error) {
-      return {
-        success: false,
-        error: error.response?.data?.message || 'Login failed'
-      };
-    }
+  // Create a mock JWT token for development/testing
+  const createMockJWT = (user) => {
+    // Create a JWT-like structure with three parts
+    const header = { alg: 'HS256', typ: 'JWT' };
+    const payload = {
+      id: user.id,
+      isAdmin: user.isAdmin,
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + (60 * 60)
+    };
+    
+    // Base64Url encode the parts
+    const base64Url = (obj) => {
+      const str = JSON.stringify(obj);
+      const base64 = Buffer.from(str).toString('base64');
+      return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    };
+    
+    const headerBase64 = base64Url(header);
+    const payloadBase64 = base64Url(payload);
+    const signature = base64Url('mock_signature');
+    
+    return `${headerBase64}.${payloadBase64}.${signature}`;
   };
 
-  const register = async (userData) => {
+  const login = async (credentials) => {
     try {
-      const { firstName, lastName, email, password } = userData;
+      setLoading(true);
+      setError(null);
       
-      // Generate a username from email (before @)
-      const username = email.split('@')[0];
+      const response = await apiService.auth.login(credentials);
       
-      const response = await api.post('/auth/signup', {
-        username,
-        firstName,
-        lastName,
-        email,
-        password
-      });
-
-      // Return success even without auto-login
-      return {
-        success: true,
-        message: 'Registration successful! Please sign in.'
-      };
+      if (response.data.success) {
+        const { token, user } = response.data;
+        
+        // Store token and user in localStorage
+        localStorage.setItem('token', token);
+        localStorage.setItem('user', JSON.stringify(user));
+        
+        // Update state
+        setToken(token);
+        setUser(user);
+        setIsAuthenticated(true);
+        setIsAdmin(user.isAdmin);
+        
+        return { success: true, user };
+      } else {
+        throw new Error(response.data.message || 'Login failed');
+      }
     } catch (error) {
-      return {
-        success: false,
-        error: error.response?.data?.message || 'Registration failed'
-      };
+      console.error('Login error:', error);
+      setError(error.message || 'Login failed. Please try again.');
+      return false;
+    } finally {
+      setLoading(false);
     }
   };
 
   const logout = () => {
-    localStorage.removeItem('token');
-    delete api.defaults.headers.common['Authorization'];
+    // Clear auth state
+    setIsAuthenticated(false);
     setUser(null);
+    setToken(null);
+    setIsAdmin(false);
+    
+    // Clear stored tokens
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    
+    return { success: true };
   };
 
   const value = {
+    isAuthenticated,
     user,
     loading,
+    error,
+    token,
+    isAdmin,
     login,
     logout,
-    register,
-    isAuthenticated: !!user,
-    isAdmin: user?.isAdmin || false
+    checkAuthStatus
   };
 
   return (
@@ -102,4 +196,4 @@ export const useAuth = () => {
   return context;
 };
 
-export default useAuth;
+export default AuthProvider;

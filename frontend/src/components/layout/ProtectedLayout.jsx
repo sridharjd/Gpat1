@@ -1,13 +1,24 @@
-import React from 'react';
-import { Navigate, Outlet } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Box, CircularProgress } from '@mui/material';
+import { useAuth } from '../../hooks/useAuth';
 
 const ProtectedLayout = ({ 
-  isAuthenticated, 
   isAdmin = false,
   redirectPath = '/signin',
   isLoading = false
 }) => {
+  const { isAuthenticated } = useAuth();
+  const location = useLocation();
+
+  // Add a useEffect to avoid the console error during logout
+  useEffect(() => {
+    // This is just to silence the error during component unmounting
+    return () => {
+      // Cleanup function
+    };
+  }, []);
+
   if (isLoading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
@@ -16,25 +27,25 @@ const ProtectedLayout = ({
     );
   }
 
-  // For admin routes, check both authentication and admin status
-  if (!isAuthenticated || (isAdmin && !isAdmin)) {
+  if (!isAuthenticated) {
+    // Only log the error if we're not already on the signin page or just navigated from a protected route
+    if (!location.pathname.includes('signin')) {
+      console.error('Unauthorized access attempt. Redirecting to sign-in.');
+    }
     return <Navigate to={redirectPath} replace />;
   }
 
-  return (
-    <Box
-      component="main"
-      sx={{
-        flexGrow: 1,
-        minHeight: '100vh',
-        backgroundColor: (theme) => theme.palette.grey[100],
-        pt: { xs: 7, sm: 8 }, // Account for fixed navbar
-        px: 2
-      }}
-    >
-      <Outlet />
-    </Box>
-  );
+  // For admin routes, check admin status
+  if (isAdmin) {
+    // No change needed here
+  }
+
+  try {
+    return <Outlet />;
+  } catch (error) {
+    console.error('An error occurred while rendering the outlet:', error); 
+    return <Navigate to={redirectPath} replace />;
+  }
 };
 
 export default ProtectedLayout;

@@ -1,6 +1,11 @@
 const db = require('../config/db');
-const User = require('../models/user');
+const User = require('../models/User');
 const UserPerformance = require('../models/userperformance');
+
+const handleError = (res, error, message, statusCode = 500) => {
+  console.error(message, error);
+  res.status(statusCode).json({ message, error: error.message });
+};
 
 // Existing User Management Functions
 const getAllUsers = async (req, res) => {
@@ -8,8 +13,8 @@ const getAllUsers = async (req, res) => {
     const [users] = await db.query('SELECT id, username, email, is_admin, created_at FROM users');
     res.json(users);
   } catch (err) {
-    console.error('Users fetch error:', err);
-    res.status(500).json({ message: 'Server error' });
+    console.error('Error fetching all users:', err);
+    handleError(res, err, 'Failed to fetch all users', 500);
   }
 };
 
@@ -21,13 +26,14 @@ const getUserById = async (req, res) => {
     );
     
     if (!user[0]) {
+      console.error(`User with ID ${req.params.id} not found`);
       return res.status(404).json({ message: 'User not found' });
     }
     
     res.json(user[0]);
   } catch (err) {
-    console.error('User fetch error:', err);
-    res.status(500).json({ message: 'Server error' });
+    console.error(`Error fetching user with ID ${req.params.id}:`, err);
+    handleError(res, err, 'Failed to fetch user', 500);
   }
 };
 
@@ -46,13 +52,14 @@ const updateUser = async (req, res) => {
     );
     
     if (!updatedUser[0]) {
+      console.error(`User with ID ${req.params.id} not found after update`);
       return res.status(404).json({ message: 'User not found' });
     }
     
     res.json(updatedUser[0]);
   } catch (err) {
-    console.error('User update error:', err);
-    res.status(500).json({ message: 'Server error' });
+    console.error(`Error updating user with ID ${req.params.id}:`, err);
+    handleError(res, err, 'Failed to update user', 500);
   }
 };
 
@@ -61,13 +68,14 @@ const deleteUser = async (req, res) => {
     const [result] = await db.query('DELETE FROM users WHERE id = ?', [req.params.id]);
     
     if (result.affectedRows === 0) {
+      console.error(`User with ID ${req.params.id} not found`);
       return res.status(404).json({ message: 'User not found' });
     }
     
     res.json({ message: 'User deleted successfully' });
   } catch (err) {
-    console.error('User delete error:', err);
-    res.status(500).json({ message: 'Server error' });
+    console.error(`Error deleting user with ID ${req.params.id}:`, err);
+    handleError(res, err, 'Failed to delete user', 500);
   }
 };
 
@@ -80,13 +88,14 @@ const getProfile = async (req, res) => {
     );
     
     if (!user[0]) {
+      console.error(`User with ID ${req.user.id} not found`);
       return res.status(404).json({ message: 'User not found' });
     }
     
     res.json(user[0]);
   } catch (err) {
-    console.error('Profile fetch error:', err);
-    res.status(500).json({ message: 'Server error' });
+    console.error(`Error fetching profile for user with ID ${req.user.id}:`, err);
+    handleError(res, err, 'Failed to fetch profile', 500);
   }
 };
 
@@ -106,8 +115,8 @@ const updateProfile = async (req, res) => {
     
     res.json(updatedUser[0]);
   } catch (err) {
-    console.error('Profile update error:', err);
-    res.status(500).json({ message: 'Server error' });
+    console.error(`Error updating profile for user with ID ${req.user.id}:`, err);
+    handleError(res, err, 'Failed to update profile', 500);
   }
 };
 
@@ -131,8 +140,8 @@ const getTestHistory = async (req, res) => {
     
     res.json(formattedTests);
   } catch (err) {
-    console.error('Test history fetch error:', err);
-    res.status(500).json({ message: 'Server error' });
+    console.error(`Error fetching test history for user with ID ${req.user.id}:`, err);
+    handleError(res, err, 'Failed to fetch test history', 500);
   }
 };
 
@@ -147,6 +156,7 @@ const getTestById = async (req, res) => {
     );
     
     if (!test[0]) {
+      console.error(`Test with ID ${req.params.id} not found`);
       return res.status(404).json({ message: 'Test not found' });
     }
     
@@ -158,8 +168,8 @@ const getTestById = async (req, res) => {
     
     res.json(formattedTest);
   } catch (err) {
-    console.error('Test fetch error:', err);
-    res.status(500).json({ message: 'Server error' });
+    console.error(`Error fetching test with ID ${req.params.id}:`, err);
+    handleError(res, err, 'Failed to fetch test', 500);
   }
 };
 
@@ -189,8 +199,8 @@ const getSettings = async (req, res) => {
       autoSaveAnswers: settings[0].auto_save_answers
     });
   } catch (err) {
-    console.error('Settings fetch error:', err);
-    res.status(500).json({ message: 'Server error' });
+    console.error(`Error fetching settings for user with ID ${req.user.id}:`, err);
+    handleError(res, err, 'Failed to fetch settings', 500);
   }
 };
 
@@ -208,6 +218,7 @@ const updateSettings = async (req, res) => {
 
     const dbSetting = settingMap[setting];
     if (!dbSetting) {
+      console.error(`Invalid setting: ${setting}`);
       return res.status(400).json({ message: 'Invalid setting' });
     }
 
@@ -245,8 +256,55 @@ const updateSettings = async (req, res) => {
       autoSaveAnswers: updatedSettings[0].auto_save_answers
     });
   } catch (err) {
-    console.error('Settings update error:', err);
-    res.status(500).json({ message: 'Server error' });
+    console.error(`Error updating settings for user with ID ${req.user.id}:`, err);
+    handleError(res, err, 'Failed to update settings', 500);
+  }
+};
+
+const getUserSettings = async (req, res) => {
+  try {
+    const [settings] = await db.query(
+      'SELECT auto_save_answers FROM user_settings WHERE user_id = ?',
+      [req.user.id]
+    );
+
+    if (!settings[0]) {
+      return res.status(404).json({ message: 'Settings not found' });
+    }
+
+    res.json({
+      success: true,
+      data: settings[0]
+    });
+  } catch (error) {
+    handleError(res, error, 'Error fetching user settings');
+  }
+};
+
+const updateUserSettings = async (req, res) => {
+  const { setting, value } = req.body;
+
+  if (!setting || value === undefined) {
+    return res.status(400).json({ message: 'Setting and value are required' });
+  }
+
+  try {
+    const dbSetting = settingMap[setting];
+    if (!dbSetting) {
+      return res.status(400).json({ message: 'Invalid setting' });
+    }
+
+    await db.query(
+      `UPDATE user_settings SET ${dbSetting} = ? WHERE user_id = ?`,
+      [value, req.user.id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Settings updated successfully'
+    });
+  } catch (error) {
+    handleError(res, error, 'Error updating user settings');
   }
 };
 
@@ -261,5 +319,7 @@ module.exports = {
   getTestHistory, 
   getTestById, 
   getSettings, 
-  updateSettings 
+  updateSettings, 
+  getUserSettings, 
+  updateUserSettings 
 };

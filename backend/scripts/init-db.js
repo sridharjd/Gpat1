@@ -20,12 +20,10 @@ async function initializeDatabase() {
         console.log('Executed SQL statement successfully');
       }
     }
-
-    console.log('Database initialization completed successfully');
-    process.exit(0);
+    console.log('Database initialization completed successfully.');
   } catch (error) {
-    console.error('Error initializing database:', error);
-    process.exit(1);
+    console.error('Error during database initialization:', error);
+    throw new Error('Database initialization failed');
   }
 }
 

@@ -83,6 +83,7 @@ body {
   transition: opacity var(--transition-speed) ease-in;
 }
 
+
 /* Responsive Design */
 @media (max-width: 600px) {
   .MuiContainer-root {

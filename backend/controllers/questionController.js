@@ -1,13 +1,19 @@
 const db = require('../config/db');
 const xlsx = require('xlsx');
 
+// Function to handle errors
+const handleError = (res, error, message, statusCode = 500) => {
+  console.error(message, error);
+  res.status(statusCode).json({ message, error: error.message });
+};
+
 // Function to get all questions
 const getAllQuestions = async (req, res) => {
   try {
     const [questions] = await db.query('SELECT * FROM pyq_questions');
     res.json(questions);
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching questions' });
+    handleError(res, error, 'Error fetching questions');
   }
 };
 
@@ -38,7 +44,7 @@ const getQuestionsByFilters = async (req, res) => {
     res.json(questions);
   } catch (error) {
     console.error('Error fetching questions:', error);
-    res.status(500).json({ message: 'Error fetching questions' });
+    handleError(res, error, 'Error fetching questions');
   }
 };
 
@@ -48,7 +54,7 @@ const getUniqueYears = async (req, res) => {
     const [years] = await db.query('SELECT DISTINCT year FROM pyq_questions ORDER BY year DESC');
     res.json(years.map((row) => row.year));
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching years' });
+    handleError(res, error, 'Error fetching years');
   }
 };
 
@@ -59,7 +65,7 @@ const getQuestionById = async (req, res) => {
     const [question] = await db.query('SELECT * FROM pyq_questions WHERE id = ?', [id]);
     res.json(question[0]);
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching question' });
+    handleError(res, error, 'Error fetching question');
   }
 };
 
@@ -75,7 +81,7 @@ const updateQuestion = async (req, res) => {
     );
     res.json({ message: 'Question updated successfully' });
   } catch (error) {
-    res.status(500).json({ message: 'Error updating question' });
+    handleError(res, error, 'Error updating question');
   }
 };
 
@@ -86,7 +92,7 @@ const deleteQuestion = async (req, res) => {
     await db.query('DELETE FROM pyq_questions WHERE id = ?', [id]);
     res.json({ message: 'Question deleted successfully' });
   } catch (error) {
-    res.status(500).json({ message: 'Error deleting question' });
+    handleError(res, error, 'Error deleting question');
   }
 };
 
@@ -128,7 +134,7 @@ const updateQuestionsFromFile = async (req, res) => {
     res.json({ message: 'Questions updated successfully.' });
   } catch (error) {
     console.error('Error updating questions:', error);
-    res.status(500).json({ message: 'Error updating questions.' });
+    handleError(res, error, 'Error updating questions.');
   }
 };
 

@@ -11,6 +11,7 @@ const errorHandler = (err, req, res, next) => {
     });
   } else {
     // Production mode: don't leak error details
+    console.error('Error occurred:', err);
     res.status(err.statusCode).json({
       status: err.status,
       message: err.message

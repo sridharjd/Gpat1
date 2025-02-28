@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { TextField, Button, Paper, Typography, Container, Box, Alert, CircularProgress } from '@mui/material';
 import { useFormik } from 'formik';
 import * as Yup from 'yup';
-import api from '../../services/api';
+import { useAuth } from '../../hooks/useAuth';
+import apiService from '../../services/api';
 
 const SignUp = () => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
+  const { signUp } = useAuth();
 
   const formik = useFormik({
     initialValues: {
@@ -40,20 +42,20 @@ const SignUp = () => {
         .required('Phone number is required'),
     }),
     onSubmit: async (values) => {
-      try {
+      const handleSubmit = async (values) => {
         setIsLoading(true);
-        setError('');
-        
-        // Remove confirmPassword before sending to API
-        const { confirmPassword, ...signupData } = values;
-        
-        await api.post('/auth/signup', signupData);
-        navigate('/verify-email', { state: { email: values.email } });
-      } catch (err) {
-        setError(err.response?.data?.message || 'An error occurred during sign up');
-      } finally {
-        setIsLoading(false);
-      }
+        try {
+          const response = await signUp(values);
+          console.log('Sign-up successful:', response.data);
+          navigate('/signin');
+        } catch (error) {
+          console.error('Sign-up error:', error.response.data);
+          setError(`Failed to sign up: ${error.response.data.message}`);
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      handleSubmit(values);
     },
   });
 
@@ -144,9 +146,9 @@ const SignUp = () => {
           </Button>
 
           <Box sx={{ mt: 2 }}>
-            <Link to="/signin" style={{ textDecoration: 'none' }}>
+            <RouterLink to="/signin" style={{ textDecoration: 'none' }}>
               Already have an account? Sign In
-            </Link>
+            </RouterLink>
           </Box>
         </Box>
       </Paper>

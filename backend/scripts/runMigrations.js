@@ -18,25 +18,8 @@ async function runMigrations() {
     // Read schema file
     console.log('Running initial schema...');
     const schemaSQL = await fs.readFile(path.join(__dirname, '../db/db.sql'), 'utf8');
-    
-    // Split and execute each statement
-    const statements = schemaSQL
-      .split(';')
-      .map(statement => statement.trim())
-      .filter(statement => statement.length > 0);
-
-    for (const statement of statements) {
-      if (statement.toLowerCase().includes('create database') || statement.toLowerCase().includes('use ')) {
-        continue; // Skip database creation and use statements
-      }
-      try {
-        await connection.query(statement);
-      } catch (err) {
-        console.error('Error executing statement:', statement);
-        console.error('Error:', err);
-      }
-    }
-    console.log('Initial schema created successfully');
+    await connection.query(schemaSQL);
+    console.log('Initial schema applied successfully.');
 
     // Read and execute all migration files
     console.log('Running migrations...');
@@ -47,19 +30,13 @@ async function runMigrations() {
       if (file.endsWith('.sql')) {
         console.log(`Running migration: ${file}`);
         const migrationSQL = await fs.readFile(path.join(migrationsDir, file), 'utf8');
-        const migrationStatements = migrationSQL
-          .split(';')
-          .map(statement => statement.trim())
-          .filter(statement => statement.length > 0);
-
-        for (const statement of migrationStatements) {
-          try {
-            await connection.query(statement);
-          } catch (err) {
-            console.error(`Error in migration ${file}:`, err);
-          }
+        try {
+          await connection.query(migrationSQL);
+          console.log(`Migration ${file} completed successfully`);
+        } catch (err) {
+          console.error(`Error in migration ${file}:`, err);
+          throw new Error(`Migration ${file} failed`);
         }
-        console.log(`Migration ${file} completed successfully`);
       }
     }
 

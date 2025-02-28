@@ -35,7 +35,7 @@ import {
   Tooltip,
   Legend,
 } from 'chart.js';
-import api from '../../../services/api';
+import apiService from '../../../services/api';
 import { useAuth } from '../../../hooks/useAuth';
 
 // Register ChartJS components
@@ -57,7 +57,7 @@ const Dashboard = () => {
     subjectPerformance: null,
   });
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState('');
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
 
   // Define all hooks at the top level
@@ -87,7 +87,7 @@ const Dashboard = () => {
         navigate('/signin');
         return;
       }
-      setError(error.response.data.message || 'An error occurred while fetching data');
+      setError('Failed to fetch dashboard data. Please try again later.');
     } else if (error.request) {
       setError('Network error. Please check your connection.');
     } else {
@@ -96,13 +96,10 @@ const Dashboard = () => {
   }, [logout, navigate]);
 
   const fetchDashboardData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
     try {
-      const performanceRes = await api.get('/dashboard/performance');
-      const testsRes = await api.get('/dashboard/recent-tests');
-      const subjectsRes = await api.get('/dashboard/subject-performance');
+      const performanceRes = await apiService.dashboard.getPerformance();
+      const testsRes = await apiService.dashboard.getRecentTests();
+      const subjectsRes = await apiService.dashboard.getSubjectPerformance();
 
       setDashboardData({
         performance: performanceRes.data.success ? performanceRes.data.data : null,
@@ -112,7 +109,9 @@ const Dashboard = () => {
           data: subjectsRes.data.data.scores || []
         } : null,
       });
+      console.log('Dashboard data fetched successfully:', performanceRes.data, testsRes.data, subjectsRes.data);
     } catch (error) {
+      console.error('Error fetching dashboard data:', error);
       handleApiError(error);
     } finally {
       setLoading(false);

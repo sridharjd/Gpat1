@@ -11,7 +11,10 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Button
+  Button,
+  IconButton,
+  Menu,
+  Tooltip
 } from '@mui/material';
 import { Line, Bar } from 'react-chartjs-2';
 import {
@@ -22,10 +25,15 @@ import {
   LineElement,
   BarElement,
   Title,
-  Tooltip,
+  Tooltip as ChartTooltip,
   Legend
 } from 'chart.js';
-import api from '../../../services/api';
+import {
+  Download as DownloadIcon,
+  MoreVert as MoreVertIcon
+} from '@mui/icons-material';
+import * as XLSX from 'xlsx';
+import apiService from '../../../services/api';
 
 ChartJS.register(
   CategoryScale,
@@ -34,7 +42,7 @@ ChartJS.register(
   LineElement,
   BarElement,
   Title,
-  Tooltip,
+  ChartTooltip,
   Legend
 );
 
@@ -46,115 +54,85 @@ const Reports = () => {
   const [reportData, setReportData] = useState(null);
 
   useEffect(() => {
+    const fetchReportData = async () => {
+      try {
+        const response = await apiService.admin.getReports({ type: reportType, range: timeRange });
+        setReportData(response.data);
+      } catch (error) {
+        console.error('Error fetching report data:', error);
+        setError('Failed to fetch report data.');
+      } finally {
+        setLoading(false);
+      }
+    };
     fetchReportData();
   }, [reportType, timeRange]);
 
-  const fetchReportData = async () => {
-    setLoading(true);
-    setError('');
-
+  const handleExport = async (format = 'excel') => {
     try {
-      const response = await api.get('/admin/reports', {
-        params: { type: reportType, range: timeRange }
-      });
-      setReportData(response.data);
-    } catch (err) {
-      setError('Failed to fetch report data');
-      console.error('Report error:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+      const response = await apiService.admin.getReportData({ type: reportType, range: timeRange });
 
-  const handleExport = async () => {
-    try {
-      const response = await api.get('/admin/reports/export', {
-        params: { type: reportType, range: timeRange },
-        responseType: 'blob'
-      });
+      if (format === 'excel') {
+        const workbook = XLSX.utils.book_new();
 
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `${reportType}-report-${timeRange}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-    } catch (err) {
-      setError('Failed to export report');
-    }
-  };
+        // Summary Sheet
+        const summaryData = [
+          ['Report Type', reportType.charAt(0).toUpperCase() + reportType.slice(1)],
+          ['Time Range', timeRange.charAt(0).toUpperCase() + timeRange.slice(1)],
+          ['Generated Date', new Date().toLocaleString()],
+          []
+        ];
 
-  const renderChart = () => {
-    if (!reportData) return null;
+        if (reportType === 'performance') {
+          // Performance Analysis Sheet
+          const performanceData = [
+            ['Date', 'Average Score', 'Number of Tests', 'Pass Rate', 'Subject-wise Performance'],
+            ...response.data.details.map(item => [
+              item.date,
+              item.averageScore.toFixed(2) + '%',
+              item.testCount,
+              item.passRate.toFixed(2) + '%',
+              Object.entries(item.subjectPerformance)
+                .map(([subject, score]) => `${subject}: ${score.toFixed(2)}%`)
+                .join(', ')
+            ])
+          ];
 
-    const commonOptions = {
-      responsive: true,
-      plugins: {
-        legend: {
-          position: 'top',
-        },
-        title: {
-          display: true,
-          text: `${reportType.charAt(0).toUpperCase() + reportType.slice(1)} Report`,
-        },
-      },
-    };
+          // User Performance Sheet
+          const userPerformanceData = [
+            ['Username', 'Tests Taken', 'Average Score', 'Best Score', 'Worst Score', 'Most Challenging Subjects'],
+            ...response.data.userPerformance.map(user => [
+              user.username,
+              user.testsTaken,
+              user.averageScore.toFixed(2) + '%',
+              user.bestScore.toFixed(2) + '%',
+              user.worstScore.toFixed(2) + '%',
+              user.challengingSubjects.join(', ')
+            ])
+          ];
 
-    switch (reportType) {
-      case 'performance':
-        return (
-          <Line
-            data={{
-              labels: reportData.labels,
-              datasets: [
-                {
-                  label: 'Average Score',
-                  data: reportData.averageScores,
-                  borderColor: 'rgb(75, 192, 192)',
-                  tension: 0.1,
-                },
-                {
-                  label: 'Number of Tests',
-                  data: reportData.testCounts,
-                  borderColor: 'rgb(255, 99, 132)',
-                  tension: 0.1,
-                },
-              ],
-            }}
-            options={commonOptions}
-          />
-        );
+          XLSX.utils.sheet_add_aoa(workbook, summaryData, { origin: 'A1' });
+          const ws1 = XLSX.utils.aoa_to_sheet(performanceData);
+          const ws2 = XLSX.utils.aoa_to_sheet(userPerformanceData);
+          
+          // Add sheets to workbook
+          XLSX.utils.book_append_sheet(workbook, ws1, 'Performance Data');
+          XLSX.utils.book_append_sheet(workbook, ws2, 'User Performance');
+        }
 
-      case 'users':
-        return (
-          <Bar
-            data={{
-              labels: reportData.labels,
-              datasets: [
-                {
-                  label: 'New Users',
-                  data: reportData.newUsers,
-                  backgroundColor: 'rgba(53, 162, 235, 0.5)',
-                },
-                {
-                  label: 'Active Users',
-                  data: reportData.activeUsers,
-                  backgroundColor: 'rgba(75, 192, 192, 0.5)',
-                },
-              ],
-            }}
-            options={commonOptions}
-          />
-        );
-
-      default:
-        return null;
+        // Download the Excel file
+        XLSX.writeFile(workbook, `Report_${reportType}_${timeRange}.xlsx`);
+      }
+    } catch (error) {
+      console.error('Error exporting report:', error);
+      setError('Failed to export report.');
     }
   };
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+    <Container>
+      <Typography variant="h4">Reports</Typography>
+      {error && <Alert severity="error">{error}</Alert>}
       <Paper elevation={3} sx={{ p: 3 }}>
         <Box sx={{ mb: 3 }}>
           <Typography variant="h5" gutterBottom>
@@ -190,14 +168,36 @@ const Reports = () => {
               </FormControl>
             </Grid>
             <Grid item xs={12} sm={4}>
-              <Button
-                variant="contained"
-                onClick={handleExport}
-                fullWidth
-                sx={{ height: '56px' }}
-              >
-                Export Report
-              </Button>
+              <Box sx={{ display: 'flex', height: '56px' }}>
+                <Button
+                  variant="contained"
+                  onClick={() => handleExport('excel')}
+                  startIcon={<DownloadIcon />}
+                  sx={{ flex: 1, mr: 1 }}
+                >
+                  Export to Excel
+                </Button>
+                <Tooltip title="Export Options">
+                  <IconButton
+                    onClick={handleClick}
+                    sx={{ ml: 1 }}
+                  >
+                    <MoreVertIcon />
+                  </IconButton>
+                </Tooltip>
+                <Menu
+                  anchorEl={anchorEl}
+                  open={open}
+                  onClose={handleClose}
+                >
+                  <MenuItem onClick={() => {
+                    handleExport('csv');
+                    handleClose();
+                  }}>
+                    Export as CSV
+                  </MenuItem>
+                </Menu>
+              </Box>
             </Grid>
           </Grid>
 

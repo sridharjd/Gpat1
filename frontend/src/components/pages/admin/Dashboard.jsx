@@ -23,7 +23,7 @@ import {
   Alert
 } from '@mui/material';
 import { Edit as EditIcon, Delete as DeleteIcon } from '@mui/icons-material';
-import api from '../../../services/api';
+import apiService from '../../../services/api';
 
 const AdminDashboard = () => {
   const [users, setUsers] = useState([]);
@@ -32,18 +32,20 @@ const AdminDashboard = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
+  const fetchUsers = async () => {
+    try {
+      const response = await apiService.admin.getUsers();
+      setUsers(response.data);
+      console.log('Users fetched successfully:', response.data);
+    } catch (error) {
+      setError('Error fetching users');
+      console.error('Error fetching users:', error);
+    }
+  };
+
   useEffect(() => {
     fetchUsers();
   }, []);
-
-  const fetchUsers = async () => {
-    try {
-      const response = await api.get('/admin/users');
-      setUsers(response.data);
-    } catch (err) {
-      setError('Failed to fetch users');
-    }
-  };
 
   const handleEdit = (user) => {
     setSelectedUser(user);
@@ -57,23 +59,25 @@ const AdminDashboard = () => {
 
   const handleSave = async () => {
     try {
-      await api.put(`/admin/users/${selectedUser.id}`, selectedUser);
+      await apiService.admin.updateUser(selectedUser.id, selectedUser);
       setSuccess('User updated successfully');
       fetchUsers();
       handleClose();
-    } catch (err) {
-      setError('Failed to update user');
+    } catch (error) {
+      console.error('Error updating user:', error);
+      setError('Failed to update user.');
     }
   };
 
   const handleDelete = async (userId) => {
     if (window.confirm('Are you sure you want to delete this user?')) {
       try {
-        await api.delete(`/admin/users/${userId}`);
+        await apiService.admin.deleteUser(userId);
         setSuccess('User deleted successfully');
         fetchUsers();
-      } catch (err) {
-        setError('Failed to delete user');
+      } catch (error) {
+        console.error('Error deleting user:', error);
+        setError('Failed to delete user.');
       }
     }
   };
@@ -88,11 +92,8 @@ const AdminDashboard = () => {
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
+      <Typography variant="h4">Admin Dashboard</Typography>
+      {error && <Alert severity="error">{error}</Alert>}
       {success && (
         <Alert severity="success" sx={{ mb: 2 }}>
           {success}

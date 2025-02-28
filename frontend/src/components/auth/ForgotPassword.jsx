@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { TextField, Button, Paper, Typography, Container, Box, Alert, CircularProgress } from '@mui/material';
 import { useFormik } from 'formik';
 import * as Yup from 'yup';
-import api from '../../services/api';
+import apiService from '../../services/api';
 
 const ForgotPassword = () => {
   const [error, setError] = useState('');
@@ -21,18 +21,19 @@ const ForgotPassword = () => {
         .required('Email is required'),
     }),
     onSubmit: async (values) => {
+      setIsLoading(true);
+      setError('');
+      setSuccess('');
+      
       try {
-        setIsLoading(true);
-        setError('');
-        setSuccess('');
-        
-        await api.post('/auth/forgot-password', values);
+        await apiService.auth.forgotPassword(values);
         setSuccess('Password reset instructions have been sent to your email');
         setTimeout(() => {
           navigate('/reset-password');
         }, 3000);
-      } catch (err) {
-        setError(err.response?.data?.message || 'An error occurred while processing your request');
+      } catch (error) {
+        console.error('Error requesting password reset:', error);
+        setError(error.response?.data?.message || 'Failed to request password reset');
       } finally {
         setIsLoading(false);
       }

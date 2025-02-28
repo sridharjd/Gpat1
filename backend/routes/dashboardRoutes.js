@@ -8,8 +8,31 @@ const router = express.Router();
 router.use(protect);
 
 // Dashboard routes
-router.get('/performance', dashboardController.getPerformanceData);
-router.get('/recent-tests', dashboardController.getRecentTests);
-router.get('/subject-performance', dashboardController.getSubjectPerformance);
+router.get('/performance', async (req, res) => {
+  try {
+    await dashboardController.getPerformanceData(req, res);
+  } catch (error) {
+    console.error('Error fetching performance data:', error);
+    res.status(500).json({ message: 'Failed to fetch performance data' });
+  }
+});
+
+router.get('/recent-tests', async (req, res) => {
+  try {
+    await dashboardController.getRecentTests(req, res);
+  } catch (error) {
+    console.error('Error fetching recent tests:', error);
+    res.status(500).json({ message: 'Failed to fetch recent tests' });
+  }
+});
+
+router.get('/subject-performance', async (req, res) => {
+  try {
+    await dashboardController.getSubjectPerformance(req, res);
+  } catch (error) {
+    console.error('Error fetching subject performance:', error);
+    res.status(500).json({ message: 'Failed to fetch subject performance' });
+  }
+});
 
 module.exports = router;

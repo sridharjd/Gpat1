@@ -1,8 +1,10 @@
 const db = require('../config/db');
+const logger = require('../config/logger'); // Assuming a logger module is available
 
 const isAdmin = async (req, res, next) => {
   try {
     if (!req.user) {
+      logger.error('User not logged in');
       return res.status(401).json({
         success: false,
         message: 'Please log in to access this resource'
@@ -15,6 +17,7 @@ const isAdmin = async (req, res, next) => {
     );
 
     if (!users || users.length === 0 || !users[0].is_admin) {
+      logger.error(`User ${req.user.username} does not have admin privileges`);
       return res.status(403).json({
         success: false,
         message: 'You do not have permission to access this resource'
@@ -23,11 +26,8 @@ const isAdmin = async (req, res, next) => {
 
     next();
   } catch (error) {
-    console.error('Error checking admin status:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error'
-    });
+    logger.error('Error in isAdmin middleware:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 };
 

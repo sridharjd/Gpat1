@@ -45,9 +45,22 @@ const Navbar = () => {
   };
 
   const handleLogout = () => {
-    handleMenuClose();
-    logout();
-    navigate('/signin');
+    try {
+      // Close the menu first
+      handleMenuClose();
+      
+      // Perform logout
+      logout();
+      
+      // Navigate immediately to ensure the user is redirected
+      navigate('/signin');
+      console.log('User logged out successfully.');
+      
+      // Force a page refresh to clear any remaining state
+      window.location.reload();
+    } catch (error) {
+      console.error('Error during logout:', error);
+    }
   };
 
   const handleNavigation = (path) => {
@@ -181,7 +194,7 @@ const Navbar = () => {
               color="inherit"
             >
               <Avatar sx={{ width: 32, height: 32 }}>
-                {user?.username?.[0]?.toUpperCase() || 'U'}
+                {user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || 'U'}
               </Avatar>
             </IconButton>
           ) : (

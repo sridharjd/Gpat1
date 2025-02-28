@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Container,
   Paper,
@@ -16,54 +16,49 @@ import {
   ListItemSecondaryAction
 } from '@mui/material';
 import { useAuth } from '../../../hooks/useAuth';
-import api from '../../../services/api';
+import apiService from '../../../services/api';
 
 const Settings = () => {
   const { user } = useAuth();
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [settings, setSettings] = useState({
     emailNotifications: true,
-    darkMode: false,
-    showProgress: true,
     autoSaveAnswers: true
   });
 
-  const handleToggle = async (setting) => {
+  const fetchSettings = async () => {
     try {
-      setLoading(true);
-      setError('');
-      setSuccess('');
-
-      const newValue = !settings[setting];
-      
-      // Update setting in backend
-      await api.put('/users/settings', {
-        setting,
-        value: newValue
-      });
-
-      // Update local state
-      setSettings(prev => ({
-        ...prev,
-        [setting]: newValue
-      }));
-
-      setSuccess('Settings updated successfully');
-    } catch (err) {
-      setError(err.response?.data?.message || 'Error updating settings');
+      const response = await apiService.user.getSettings();
+      setSettings(response.data);
+      console.log('Settings fetched successfully:', response.data);
+    } catch (error) {
+      console.error('Error fetching settings:', error);
+      setError('Failed to fetch settings. Please try again later.');
     } finally {
       setLoading(false);
     }
   };
 
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  const handleToggle = (setting) => {
+    setSettings((prevSettings) => ({
+      ...prevSettings,
+      [setting]: !prevSettings[setting],
+    }));
+  };
+
+  if (loading) return <CircularProgress />;
+  if (error) return <Alert severity="error">{error}</Alert>;
+
   return (
-    <Container maxWidth="md" sx={{ mt: 4, mb: 4 }}>
-      <Paper elevation={3} sx={{ p: 4 }}>
-        <Typography variant="h5" gutterBottom>
-          Settings
-        </Typography>
+    <Container>
+      <Paper>
+        <Typography variant="h4">Settings</Typography>
 
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
@@ -97,42 +92,8 @@ const Settings = () => {
           
           <ListItem>
             <ListItemText 
-              primary="Dark Mode"
-              secondary="Switch between light and dark theme"
-            />
-            <ListItemSecondaryAction>
-              <Switch
-                edge="end"
-                checked={settings.darkMode}
-                onChange={() => handleToggle('darkMode')}
-                disabled={loading}
-              />
-            </ListItemSecondaryAction>
-          </ListItem>
-          
-          <Divider />
-          
-          <ListItem>
-            <ListItemText 
-              primary="Show Progress"
-              secondary="Display your progress in the dashboard"
-            />
-            <ListItemSecondaryAction>
-              <Switch
-                edge="end"
-                checked={settings.showProgress}
-                onChange={() => handleToggle('showProgress')}
-                disabled={loading}
-              />
-            </ListItemSecondaryAction>
-          </ListItem>
-          
-          <Divider />
-          
-          <ListItem>
-            <ListItemText 
-              primary="Auto-save Answers"
-              secondary="Automatically save your answers during tests"
+              primary="Auto Save Answers"
+              secondary="Automatically save your answers while taking tests"
             />
             <ListItemSecondaryAction>
               <Switch
@@ -144,12 +105,6 @@ const Settings = () => {
             </ListItemSecondaryAction>
           </ListItem>
         </List>
-
-        {loading && (
-          <Box display="flex" justifyContent="center" mt={2}>
-            <CircularProgress />
-          </Box>
-        )}
       </Paper>
     </Container>
   );

@@ -4,68 +4,99 @@ const jwt = require('jsonwebtoken');
 
 // Helper function to generate tokens
 const generateToken = (payload, expiresIn = '1h') => {
-  return jwt.sign(payload, process.env.JWT_SECRET || 'your_secret_key', { expiresIn });
+  if (!process.env.JWT_SECRET) {
+      console.error('JWT_SECRET is not set in environment variables');
+      throw new Error('Server configuration error');
+  }
+  return jwt.sign(payload, process.env.JWT_SECRET, { 
+      expiresIn,
+      algorithm: 'HS256'
+  });
+};
+
+// Error handling function
+const handleError = (res, error, message, statusCode = 500) => {
+  console.error(message, error);
+  res.status(statusCode).json({ message, error: error.message });
 };
 
 // Sign In Function
 const signIn = async (req, res) => {
-  const { userId, password } = req.body;
+  const { email, password } = req.body;
 
-  if (!userId || !password) {
-    return res.status(400).json({ message: 'Username/Email and password are required' });
+  if (!email || !password) {
+    return res.status(400).json({ 
+      success: false,
+      message: 'Email and password are required' 
+    });
   }
 
   try {
-    // Check if the userId is an email or username
     const [user] = await db.query(
-      'SELECT * FROM users WHERE email = ? OR username = ?', 
-      [userId, userId]
+      'SELECT * FROM users WHERE email = ?',
+      [email]
     );
 
-    if (!user.length) {
-      return res.status(400).json({ message: 'Invalid credentials' });
+    if (!user[0]) {
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid email or password' 
+      });
     }
 
     const isMatch = await bcrypt.compare(password, user[0].password);
-
     if (!isMatch) {
-      return res.status(400).json({ message: 'Invalid credentials' });
+      return res.status(401).json({ 
+        success: false,
+        message: 'Invalid email or password' 
+      });
     }
 
-    const token = generateToken({ 
-      id: user[0].id, 
-      isAdmin: user[0].is_admin 
-    });
+    // Create token payload
+const payload = { 
+    id: user[0].id,
+    isAdmin: Boolean(user[0].is_admin)
+};
 
-    // Update last login
-    await db.query('UPDATE users SET last_login = NOW() WHERE id = ?', [user[0].id]);
+    // Generate access token
+    const token = generateToken(payload);
+
+    // Update last login timestamp
+    await db.query(
+      'UPDATE users SET last_login = NOW() WHERE id = ?',
+      [user[0].id]
+    );
+
+    // Log successful login
+    console.log(`User logged in: ${user[0].email} (ID: ${user[0].id})`);
+    console.log('Generated token:', token);
 
     res.json({
+      success: true,
       token,
       user: {
         id: user[0].id,
         username: user[0].username,
+        email: user[0].email,
         firstName: user[0].first_name,
         lastName: user[0].last_name,
-        email: user[0].email,
-        isAdmin: user[0].is_admin,
+        isAdmin: Boolean(user[0].is_admin)
       }
     });
   } catch (error) {
-    console.error('Sign in error:', error);
-    res.status(500).json({ message: 'Error signing in' });
+    handleError(res, error, 'Error signing in');
   }
 };
 
 // Sign Up Function
 const signUp = async (req, res) => {
-  const { username, email, password, firstName, lastName, phoneNumber } = req.body;
-
-  if (!username || !email || !password || !firstName || !lastName) {
-    return res.status(400).json({ message: 'All required fields must be provided' });
-  }
-
   try {
+    const { username, email, password, firstName, lastName, phoneNumber } = req.body;
+
+    if (!username || !email || !password || !firstName || !lastName) {
+      return handleError(res, new Error('Missing fields'), 'All required fields must be provided', 400);
+    }
+
     // Check for existing user
     const [existingUser] = await db.query(
       'SELECT * FROM users WHERE email = ? OR username = ?', 
@@ -74,7 +105,7 @@ const signUp = async (req, res) => {
 
     if (existingUser.length > 0) {
       const field = existingUser[0].email === email ? 'email' : 'username';
-      return res.status(400).json({ message: `This ${field} is already registered` });
+      return handleError(res, new Error(`This ${field} is already registered`), `This ${field} is already registered`, 400);
     }
 
     const hashedPassword = await bcrypt.hash(password, 12);
@@ -91,6 +122,8 @@ const signUp = async (req, res) => {
       isAdmin: false
     });
 
+    console.log('User registered successfully:', username);
+
     res.status(201).json({
       message: 'User registered successfully',
       token,
@@ -104,41 +137,144 @@ const signUp = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Sign up error:', error);
-    res.status(500).json({ message: 'Error registering user' });
+    handleError(res, error, 'Error registering user');
   }
 };
 
 // Get Current User
 const getCurrentUser = async (req, res) => {
   try {
+    const userId = req.user.id;
+    
     const [user] = await db.query(
-      'SELECT id, username, email, first_name, last_name, is_admin FROM users WHERE id = ?',
-      [req.user.id]
+      `SELECT 
+        id, 
+        username, 
+        email, 
+        first_name, 
+        last_name, 
+        phone_number, 
+        is_admin, 
+        created_at, 
+        last_login 
+      FROM users 
+      WHERE id = ?`,
+      [userId]
     );
-
-    if (!user.length) {
-      return res.status(404).json({ message: 'User not found' });
+    
+    if (!user[0]) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
     }
-
+    
+    // Get user stats
+    let stats = { total_tests: 0, avg_score: 0, total_time: 0 };
+    
+    try {
+      const [statsResult] = await db.query(
+        `SELECT 
+          COUNT(id) as total_tests,
+          AVG(score) as avg_score,
+          SUM(time_taken) as total_time
+        FROM test_results
+        WHERE user_id = ?`,
+        [userId]
+      );
+      
+      if (statsResult && statsResult.length > 0) {
+        stats = statsResult[0];
+      }
+    } catch (error) {
+      console.log('Error fetching user stats:', error.message);
+      // Continue execution even if stats query fails
+    }
+    
     res.json({
+      success: true,
       user: {
         id: user[0].id,
         username: user[0].username,
+        email: user[0].email,
         firstName: user[0].first_name,
         lastName: user[0].last_name,
-        email: user[0].email,
-        isAdmin: user[0].is_admin
+        phoneNumber: user[0].phone_number,
+        isAdmin: Boolean(user[0].is_admin),
+        createdAt: user[0].created_at,
+        lastLogin: user[0].last_login,
+        stats: stats
       }
     });
   } catch (error) {
-    console.error('Get current user error:', error);
-    res.status(500).json({ message: 'Error getting user information' });
+    handleError(res, error, 'Error fetching current user');
+  }
+};
+
+// Change password
+const changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user.id;
+    
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Current password and new password are required'
+      });
+    }
+    
+    // Validate password strength
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 8 characters long'
+      });
+    }
+    
+    // Get current user
+    const [user] = await db.query(
+      'SELECT password FROM users WHERE id = ?',
+      [userId]
+    );
+    
+    if (!user[0]) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    // Verify current password
+    const isMatch = await bcrypt.compare(currentPassword, user[0].password);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: 'Current password is incorrect'
+      });
+    }
+    
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+    
+    // Update password
+    await db.query(
+      'UPDATE users SET password = ? WHERE id = ?',
+      [hashedPassword, userId]
+    );
+    
+    res.json({
+      success: true,
+      message: 'Password changed successfully'
+    });
+  } catch (error) {
+    handleError(res, error, 'Error changing password');
   }
 };
 
 module.exports = { 
   signIn, 
   signUp, 
-  getCurrentUser
+  getCurrentUser,
+  changePassword
 };

@@ -22,22 +22,38 @@ async function seedData() {
     }
 
     // Clear existing performance data for test user
-    await db.query('DELETE FROM user_performance WHERE username = ?', ['testuser']);
+    try {
+      await db.query('DELETE FROM user_performance WHERE username = ?', ['testuser']);
+    } catch (error) {
+      console.error('Error clearing performance data:', error);
+      throw new Error('Failed to clear performance data');
+    }
 
     // Add some sample performance data
     const testScores = [75, 82, 68, 90, 85];
     for (const score of testScores) {
-      await db.query(
-        `INSERT INTO user_performance (username, score, total_questions, correct_answers, incorrect_answers) 
-         VALUES (?, ?, ?, ?, ?)`,
-        ['testuser', score, 50, Math.round((score/100) * 50), Math.round((1 - score/100) * 50)]
-      );
+      try {
+        await db.query(
+          `INSERT INTO user_performance (username, score, total_questions, correct_answers, incorrect_answers) 
+           VALUES (?, ?, ?, ?, ?)`,
+          ['testuser', score, 50, Math.round((score/100) * 50), Math.round((1 - score/100) * 50)]
+        );
+      } catch (error) {
+        console.error('Error adding performance data:', error);
+        throw new Error('Failed to add performance data');
+      }
     }
     console.log('Added sample performance data');
 
     // Add sample questions
     // First get subject IDs
-    const [subjects] = await db.query('SELECT id, name FROM subjects');
+    let subjects;
+    try {
+      [subjects] = await db.query('SELECT id, name FROM subjects');
+    } catch (error) {
+      console.error('Error fetching subjects:', error);
+      throw new Error('Failed to fetch subjects');
+    }
     const subjectMap = subjects.reduce((acc, subject) => {
       acc[subject.name] = subject.id;
       return acc;
@@ -86,11 +102,16 @@ async function seedData() {
       const subjectId = subjectMap[subjectData.subject];
       if (subjectId) {
         for (const q of subjectData.questions) {
-          await db.query(
-            `INSERT INTO questions (subject_id, question_text, option_a, option_b, option_c, option_d, correct_answer, year) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [subjectId, q.text, q.options[0], q.options[1], q.options[2], q.options[3], q.correct, q.year]
-          );
+          try {
+            await db.query(
+              `INSERT INTO questions (subject_id, question_text, option_a, option_b, option_c, option_d, correct_answer, year) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+              [subjectId, q.text, q.options[0], q.options[1], q.options[2], q.options[3], q.correct, q.year]
+            );
+          } catch (error) {
+            console.error('Error adding question:', error);
+            throw new Error('Failed to add question');
+          }
         }
       }
     }
@@ -100,7 +121,7 @@ async function seedData() {
     process.exit(0);
   } catch (error) {
     console.error('Error seeding data:', error);
-    process.exit(1);
+    throw new Error('Data seeding failed');
   }
 }
 

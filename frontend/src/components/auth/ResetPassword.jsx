@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { TextField, Button, Paper, Typography, Container, Box, Alert, CircularProgress } from '@mui/material';
 import { useFormik } from 'formik';
 import * as Yup from 'yup';
-import api from '../../services/api';
+import apiService from '../../services/api';
 
 const ResetPassword = () => {
   const [error, setError] = useState('');
@@ -31,22 +31,29 @@ const ResetPassword = () => {
         .required('Confirm password is required'),
     }),
     onSubmit: async (values) => {
+      setIsLoading(true);
+      setError('');
+      setSuccess('');
+      
       try {
-        setIsLoading(true);
-        setError('');
-        setSuccess('');
+        const token = new URLSearchParams(window.location.search).get('token');
+        if (!token) {
+          setError('Reset token is missing. Please request a new password reset link.');
+          return;
+        }
         
-        await api.post('/auth/reset-password', {
+        await apiService.auth.resetPassword({
           token,
           password: values.password,
         });
         
-        setSuccess('Password has been successfully reset');
+        setSuccess('Password has been reset successfully');
         setTimeout(() => {
           navigate('/signin');
         }, 3000);
-      } catch (err) {
-        setError(err.response?.data?.message || 'An error occurred while resetting your password');
+      } catch (error) {
+        console.error('Error resetting password:', error);
+        setError(error.response?.data?.message || 'Failed to reset password');
       } finally {
         setIsLoading(false);
       }

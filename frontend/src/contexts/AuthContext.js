@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import api from '../services/api';
+import apiService from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -16,7 +16,7 @@ export const AuthProvider = ({ children }) => {
           return;
         }
 
-        const response = await api.get('/auth/validate');
+        const response = await apiService.auth.getCurrentUser();
         setUser(response.data.user);
       } catch (error) {
         console.error('Token validation error:', error);
@@ -30,7 +30,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const login = async (credentials) => {
-    const response = await api.post('/auth/signin', credentials);
+    const response = await apiService.auth.signIn(credentials);
     const { token, user } = response.data;
     localStorage.setItem('token', token);
     setUser(user);

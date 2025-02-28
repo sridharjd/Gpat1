@@ -1,5 +1,10 @@
 const db = require('../config/db');
 
+const handleError = (res, error, message, statusCode = 500) => {
+  console.error(message, error);
+  res.status(statusCode).json({ message, error: error.message });
+};
+
 // Get test questions
 const getTestQuestions = async (req, res) => {
   try {
@@ -56,11 +61,7 @@ const getTestQuestions = async (req, res) => {
       data: sanitizedQuestions
     });
   } catch (error) {
-    console.error('Error fetching test questions:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch questions. Please try again.'
-    });
+    handleError(res, error, 'Error fetching test questions');
   }
 };
 
@@ -85,147 +86,276 @@ const getTestFilters = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error fetching test filters:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch filters. Please try again.'
+    handleError(res, error, 'Error fetching test filters');
+  }
+};
+
+// Get exam information
+const getExamInfo = async (req, res) => {
+  try {
+    // Replace with actual query to fetch exam info
+    const [examInfo] = await db.query('SELECT * FROM exams');
+    res.status(200).json({
+      success: true,
+      data: examInfo
     });
+  } catch (error) {
+    handleError(res, error, 'Failed to fetch exam information');
+  }
+};
+
+// Get exam information details
+const getExamInfoDetails = async (req, res) => {
+  try {
+    const { examId } = req.params;
+    
+    // Get basic exam info
+    const [examInfo] = await db.query(
+      'SELECT * FROM exams WHERE id = ?',
+      [examId]
+    );
+    
+    if (!examInfo || examInfo.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Exam not found'
+      });
+    }
+    
+    // Get exam syllabus
+    const [syllabus] = await db.query(
+      'SELECT * FROM exam_syllabus WHERE exam_id = ?',
+      [examId]
+    );
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        ...examInfo[0],
+        syllabus: syllabus || []
+      }
+    });
+  } catch (error) {
+    handleError(res, error, 'Failed to fetch exam information details');
   }
 };
 
 // Submit test
 const submitTest = async (req, res) => {
-  const { username, responses, timeTaken } = req.body;
-
-  if (!username || !responses || Object.keys(responses).length === 0) {
-    return res.status(400).json({
-      success: false,
-      message: 'Username and at least one response are required'
-    });
-  }
-
-  let connection;
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    const { answers, testData } = req.body;
+    const userId = req.user.id;
+    
+    if (!answers || !testData || !userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields'
+      });
+    }
+    
+    // Start a transaction
+    await db.query('START TRANSACTION');
+    
+    // 1. Create test record
+    const [testResult] = await db.query(
+      `INSERT INTO test_results 
+       (user_id, subject_id, total_questions, score, time_taken, created_at) 
+       VALUES (?, ?, ?, ?, ?, NOW())`,
+      [
+        userId,
+        testData.subjectId || null,
+        testData.totalQuestions || answers.length,
+        testData.score || 0,
+        testData.timeTaken || 0
+      ]
+    );
+    
+    const testId = testResult.insertId;
+    
+    // 2. Save individual question answers
+    const answerValues = Object.entries(answers).map(([questionId, answer]) => [
+      testId,
+      questionId,
+      answer,
+      null, // is_correct will be updated in the next step
+      new Date()
+    ]);
+    
+    if (answerValues.length > 0) {
+      await db.query(
+        `INSERT INTO test_answers 
+         (test_id, question_id, selected_answer, is_correct, created_at) 
+         VALUES ?`,
+        [answerValues]
+      );
+    }
+    
+    // 3. Calculate score by comparing with correct answers
+    const questionIds = Object.keys(answers);
+    
+    if (questionIds.length > 0) {
+      const [questions] = await db.query(
+        `SELECT id, correct_answer FROM questions WHERE id IN (?)`,
+        [questionIds]
+      );
+      
+      let score = 0;
+      const questionMap = {};
+      
+      questions.forEach(q => {
+        questionMap[q.id] = q.correct_answer;
+      });
+      
+      // Update is_correct for each answer
+      for (const [questionId, answer] of Object.entries(answers)) {
+        const isCorrect = answer === questionMap[questionId];
+        if (isCorrect) score++;
+        
+        await db.query(
+          `UPDATE test_answers SET is_correct = ? 
+           WHERE test_id = ? AND question_id = ?`,
+          [isCorrect, testId, questionId]
+        );
+      }
+      
+      // Update the final score
+      await db.query(
+        `UPDATE test_results SET score = ? WHERE id = ?`,
+        [score, testId]
+      );
+    }
+    
+    // Commit the transaction
+    await db.query('COMMIT');
+    
+    res.status(201).json({
+      success: true,
+      data: {
+        testId,
+        score: testData.score || 0,
+        totalQuestions: testData.totalQuestions || answers.length
+      },
+      message: 'Test submitted successfully'
+    });
+  } catch (error) {
+    // Rollback in case of error
+    await db.query('ROLLBACK');
+    handleError(res, error, 'Error submitting test');
+  }
+};
 
-    // Calculate score
-    let correctAnswers = 0;
-    const totalQuestions = Object.keys(responses).length;
-
-    // Get correct answers and question details for all questions
-    const questionIds = Object.keys(responses);
-    const [questions] = await connection.query(
+// Get user's test history
+const getTestHistory = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { limit = 10, offset = 0 } = req.query;
+    
+    // Get test history with subject information
+    const [tests] = await db.query(
       `SELECT 
-        q.id,
+        tr.id, 
+        tr.total_questions, 
+        tr.score, 
+        tr.time_taken, 
+        tr.created_at,
+        s.name as subject_name
+      FROM test_results tr
+      LEFT JOIN subjects s ON tr.subject_id = s.id
+      WHERE tr.user_id = ?
+      ORDER BY tr.created_at DESC
+      LIMIT ? OFFSET ?`,
+      [userId, parseInt(limit), parseInt(offset)]
+    );
+    
+    // Get total count for pagination
+    const [countResult] = await db.query(
+      'SELECT COUNT(*) as total FROM test_results WHERE user_id = ?',
+      [userId]
+    );
+    
+    const total = countResult[0].total;
+    
+    res.json({
+      success: true,
+      data: {
+        tests,
+        pagination: {
+          total,
+          limit: parseInt(limit),
+          offset: parseInt(offset),
+          hasMore: total > parseInt(offset) + parseInt(limit)
+        }
+      }
+    });
+  } catch (error) {
+    handleError(res, error, 'Error fetching test history');
+  }
+};
+
+// Get a specific test by ID
+const getTestById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    
+    // Get test details
+    const [test] = await db.query(
+      `SELECT 
+        tr.id, 
+        tr.total_questions, 
+        tr.score, 
+        tr.time_taken, 
+        tr.created_at,
+        s.name as subject_name
+      FROM test_results tr
+      LEFT JOIN subjects s ON tr.subject_id = s.id
+      WHERE tr.id = ? AND tr.user_id = ?`,
+      [id, userId]
+    );
+    
+    if (!test || test.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Test not found'
+      });
+    }
+    
+    // Get test answers with questions
+    const [answers] = await db.query(
+      `SELECT 
+        ta.question_id,
+        ta.selected_answer,
+        ta.is_correct,
         q.question_text,
         q.option_a,
         q.option_b,
         q.option_c,
         q.option_d,
-        q.correct_answer,
-        q.year,
-        s.name as subject_name
-      FROM questions q
-      JOIN subjects s ON q.subject_id = s.id
-      WHERE q.id IN (?)`,
-      [questionIds]
+        q.correct_answer
+      FROM test_answers ta
+      JOIN questions q ON ta.question_id = q.id
+      WHERE ta.test_id = ?`,
+      [id]
     );
-
-    if (!questions || questions.length === 0) {
-      throw new Error('No questions found');
-    }
-
-    const correctAnswersMap = questions.reduce((map, q) => {
-      map[q.id] = q.correct_answer;
-      return map;
-    }, {});
-
-    // Check answers and count correct ones
-    for (const [questionId, userAnswer] of Object.entries(responses)) {
-      if (correctAnswersMap[questionId] === userAnswer) {
-        correctAnswers++;
-      }
-    }
-
-    const incorrectAnswers = totalQuestions - correctAnswers;
-    const score = (correctAnswers / totalQuestions) * 100;
-
-    // Create performance record
-    const [performanceResult] = await connection.query(
-      `INSERT INTO user_performance 
-       (username, score, total_questions, correct_answers, incorrect_answers, time_taken) 
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [username, score, totalQuestions, correctAnswers, incorrectAnswers, timeTaken]
-    );
-
-    if (!performanceResult || !performanceResult.insertId) {
-      throw new Error('Failed to create performance record');
-    }
-
-    // Store individual responses
-    const performanceId = performanceResult.insertId;
-    const responseValues = Object.entries(responses).map(([questionId, answer]) => [
-      performanceId,
-      questionId,
-      answer,
-      answer === correctAnswersMap[questionId],
-      timeTaken
-    ]);
-
-    await connection.query(
-      `INSERT INTO user_responses 
-       (performance_id, question_id, selected_answer, is_correct, time_taken) 
-       VALUES ?`,
-      [responseValues]
-    );
-
-    await connection.commit();
-
-    // Map questions with answers and correct/incorrect status
-    const questionDetails = questions.map(q => ({
-      id: q.id,
-      question_text: q.question_text,
-      option_a: q.option_a,
-      option_b: q.option_b,
-      option_c: q.option_c,
-      option_d: q.option_d,
-      subject_name: q.subject_name,
-      year: q.year,
-      correct_answer: q.correct_answer,
-      user_answer: responses[q.id],
-      is_correct: responses[q.id] === q.correct_answer
-    }));
-
+    
     res.json({
       success: true,
       data: {
-        score,
-        totalQuestions,
-        correctAnswers,
-        incorrectAnswers,
-        timeTaken,
-        questions: questionDetails
+        test: test[0],
+        answers
       }
     });
   } catch (error) {
-    if (connection) {
-      await connection.rollback();
-    }
-    console.error('Error submitting test:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to submit test. Please try again.'
-    });
-  } finally {
-    if (connection) {
-      connection.release();
-    }
+    handleError(res, error, 'Error fetching test details');
   }
 };
 
 module.exports = {
   getTestQuestions,
   submitTest,
-  getTestFilters
+  getTestFilters,
+  getExamInfo,
+  getExamInfoDetails,
+  getTestHistory,
+  getTestById
 };

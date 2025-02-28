@@ -13,13 +13,14 @@ const dashboardRoutes = require('./routes/dashboardRoutes');
 const performanceRoutes = require('./routes/performanceRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const errorHandler = require('./middleware/errorHandler');
+const db = require('./config/db'); // Updated path to db.js
 
 const app = express();
 
 // Security Middleware
 app.use(helmet()); // Set security HTTP headers
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: ['http://localhost:3001', 'http://localhost:3001', 'http://localhost:3001', 'http://localhost:3001', process.env.FRONTEND_URL || 'http://localhost:4000', 'http://localhost:3001'],
   credentials: true
 }));
 
@@ -49,6 +50,16 @@ app.use('/users', userRoutes);
 app.use('/dashboard', dashboardRoutes);
 app.use('/performance', performanceRoutes);
 app.use('/admin', adminRoutes);
+
+// Handle user performance updates
+app.post('/updatePerformance', (req, res) => {
+    const { userId, performanceMetric } = req.body;
+    // Logic to update user performance in the database
+    db.query('UPDATE user_performance SET performance_metric = ? WHERE user_id = ?', [performanceMetric, userId], (error, results) => {
+        if (error) return res.status(500).send('Error updating performance');
+        res.send('Performance updated successfully');
+    });
+});
 
 // Handle undefined routes
 app.all('*', (req, res, next) => {

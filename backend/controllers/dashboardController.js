@@ -1,5 +1,29 @@
 const db = require('../config/db');
 
+const handleError = (res, error, message, statusCode = 500) => {
+  console.error(message, error);
+  res.status(statusCode).json({ message, error: error.message });
+};
+
+const getUserPerformanceData = async (username) => {
+  try {
+    const [performance] = await db.query(
+      `SELECT 
+        COALESCE(AVG(score), 0) as averageScore,
+        COUNT(*) as totalTests,
+        COALESCE(MAX(score), 0) as highestScore
+      FROM user_performance
+      WHERE username = ?`,
+      [username]
+    );
+
+    return performance[0] || {};
+  } catch (error) {
+    console.error('Error fetching user performance data:', error);
+    throw error;
+  }
+};
+
 const getDashboardData = async (req, res) => {
   try {
     console.log('Fetching dashboard data...');
@@ -46,30 +70,15 @@ const getDashboardData = async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching dashboard data:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch dashboard data',
-      error: error.message
-    });
+    handleError(res, error, 'Error fetching dashboard data');
   }
 };
 
 const getPerformanceData = async (req, res) => {
   try {
     const username = req.user.username;
-    
-    // Fetch user's performance data
-    const [performance] = await db.query(
-      `SELECT 
-        COALESCE(AVG(score), 0) as averageScore,
-        COUNT(*) as totalTests,
-        COALESCE(MAX(score), 0) as highestScore
-      FROM user_performance
-      WHERE username = ?`,
-      [username]
-    );
+    const performance = await getUserPerformanceData(username);
 
-    // Get subject performance data with default values for new users
     const [subjectPerformance] = await db.query(
       `SELECT 
         s.name as subject,
@@ -84,7 +93,6 @@ const getPerformanceData = async (req, res) => {
       [username]
     );
 
-    // Get recent tests data
     const [recentTests] = await db.query(
       `SELECT 
         up.id,
@@ -104,23 +112,10 @@ const getPerformanceData = async (req, res) => {
       [username]
     );
 
-    if (!performance || !performance[0]) {
-      return res.json({
-        success: true,
-        data: {
-          averageScore: 0,
-          totalTests: 0,
-          highestScore: 0,
-          subjectPerformance: [],
-          recentTests: []
-        }
-      });
-    }
-
     res.json({
       success: true,
       data: {
-        ...performance[0],
+        ...performance,
         subjectPerformance,
         recentTests: recentTests.map(test => ({
           ...test,
@@ -130,17 +125,13 @@ const getPerformanceData = async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching performance data:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch performance data. Please try again later.'
-    });
+    handleError(res, error, 'Error fetching performance data');
   }
 };
 
 const getRecentTests = async (req, res) => {
   try {
     const username = req.user.username;
-    
     const [recentTests] = await db.query(
       `SELECT 
         up.id,
@@ -169,18 +160,13 @@ const getRecentTests = async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching recent tests:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch recent tests. Please try again later.'
-    });
+    handleError(res, error, 'Error fetching recent tests');
   }
 };
 
 const getProgressData = async (req, res) => {
   try {
     const username = req.user.username;
-    
-    // Fetch user's progress data (last 7 tests)
     const [progressData] = await db.query(
       `SELECT 
         DATE(created_at) as date,
@@ -200,10 +186,7 @@ const getProgressData = async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching progress data:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch progress data'
-    });
+    handleError(res, error, 'Error fetching progress data');
   }
 };
 
@@ -239,10 +222,7 @@ const getSubjectPerformance = async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching subject performance:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch subject performance. Please try again later.'
-    });
+    handleError(res, error, 'Error fetching subject performance');
   }
 };
 
