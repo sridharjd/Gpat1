@@ -22,19 +22,26 @@ import {
   Group as GroupIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
+import apiService from '../../../services/api';
 
 const Home = () => {
   const navigate = useNavigate();
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const fetchHomeData = async () => {
     try {
-      // Assume fetchHomeData is a function that fetches home data
-      const data = await fetchHomeData();
-      console.log('Home data fetched successfully:', data);
+      setLoading(true);
+      // For now, we'll just set a mock successful response since this is a mock implementation
+      const mockData = {
+        success: true
+      };
+      console.log('Home data fetched successfully:', mockData);
+      setLoading(false);
     } catch (error) {
       console.error('Error fetching home data:', error);
       setError('Failed to fetch home data. Please try again later.');
+      setLoading(false);
     }
   };
 

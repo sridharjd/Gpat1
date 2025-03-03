@@ -4,20 +4,41 @@
  */
 const MockTestSubmission = {
   // Store submitted tests for history
-  submittedTests: [],
-  lastSubmittedAnswers: null,
-  lastTimeSpent: 0,
+  submittedTests: JSON.parse(localStorage.getItem('mockSubmittedTests') || '[]'),
+  lastSubmittedAnswers: JSON.parse(localStorage.getItem('mockLastSubmittedAnswers') || 'null'),
+  lastTimeSpent: parseInt(localStorage.getItem('mockLastTimeSpent') || '0'),
   
   /**
    * Submit a test with mock response
    */
   submitTest: async (answers, timeSpent = 60, subject = 'Pharmacology') => {
+    // Enhanced logging for submitted answers
+    console.log('Mock test submission details:');
+    console.log('Total Questions:', Object.keys(answers).length);
+    console.log('Question IDs:', Object.keys(answers));
+    console.log('Full Answers Object:', JSON.stringify(answers, null, 2));
+    
+    // Log types of question IDs to check for potential type mismatches
+    const questionIdTypes = Object.keys(answers).map(id => typeof id);
+    console.log('Question ID Types:', questionIdTypes);
+
+    // Log a warning if question IDs don't match expected format
+    const expectedQuestionIds = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
+    const unexpectedIds = Object.keys(answers).filter(id => !expectedQuestionIds.includes(id));
+    if (unexpectedIds.length > 0) {
+      console.warn('Unexpected Question IDs detected:', unexpectedIds);
+    }
+
     // Log the attempt
     console.log('Mock test submission with answers:', answers);
     
     // Store the answers for later use
     MockTestSubmission.lastSubmittedAnswers = answers;
     MockTestSubmission.lastTimeSpent = timeSpent;
+    
+    // Update localStorage
+    localStorage.setItem('mockLastSubmittedAnswers', JSON.stringify(answers));
+    localStorage.setItem('mockLastTimeSpent', timeSpent.toString());
     
     // Simulate API processing time
     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -47,6 +68,9 @@ const MockTestSubmission = {
     
     // Add to submitted tests history
     MockTestSubmission.submittedTests.push(testSubmission);
+    
+    // Update localStorage
+    localStorage.setItem('mockSubmittedTests', JSON.stringify(MockTestSubmission.submittedTests));
     
     // Return a successful mock response
     return {
@@ -78,6 +102,8 @@ const MockTestSubmission = {
    * Get all submitted tests
    */
   getAllSubmittedTests: () => {
+    // Refresh from localStorage in case it was updated in another tab/window
+    MockTestSubmission.submittedTests = JSON.parse(localStorage.getItem('mockSubmittedTests') || '[]');
     return MockTestSubmission.submittedTests || [];
   },
   
@@ -85,6 +111,8 @@ const MockTestSubmission = {
    * Get a specific test by ID
    */
   getTestById: (id) => {
+    // Refresh from localStorage
+    MockTestSubmission.submittedTests = JSON.parse(localStorage.getItem('mockSubmittedTests') || '[]');
     return MockTestSubmission.submittedTests.find(test => test.id === id) || null;
   },
   
@@ -95,6 +123,18 @@ const MockTestSubmission = {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
     return `${minutes}m ${remainingSeconds}s`;
+  },
+
+  /**
+   * Clear all stored data (useful for testing or when user logs out)
+   */
+  clearData: () => {
+    localStorage.removeItem('mockSubmittedTests');
+    localStorage.removeItem('mockLastSubmittedAnswers');
+    localStorage.removeItem('mockLastTimeSpent');
+    MockTestSubmission.submittedTests = [];
+    MockTestSubmission.lastSubmittedAnswers = null;
+    MockTestSubmission.lastTimeSpent = 0;
   }
 };
 

@@ -1,5 +1,7 @@
 import { useState, useEffect, createContext, useContext, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import apiService from '../services/api';
+import MockTestSubmission from '../components/test/MockTestSubmission';
 
 const AuthContext = createContext(null);
 
@@ -50,6 +52,7 @@ const getInitialAuthState = () => {
 };
 
 export const AuthProvider = ({ children }) => {
+  const navigate = useNavigate();
   const initialState = getInitialAuthState();
   const [isAuthenticated, setIsAuthenticated] = useState(initialState.isAuthenticated);
   const [user, setUser] = useState(initialState.user);
@@ -167,23 +170,22 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const logout = useCallback(() => {
-    try {
-      // Optional: Call backend logout endpoint if needed
-      // await apiService.auth.logout();
-      
-      // Clear auth state
-      clearAuthState();
-      
-      return { success: true };
-    } catch (error) {
-      console.error('Logout error:', error);
-      return { 
-        success: false, 
-        error: error.message 
-      };
-    }
-  }, []);
+  const logout = () => {
+    // Clear auth data
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    
+    // Clear mock test data
+    MockTestSubmission.clearData();
+    
+    // Reset state
+    setUser(null);
+    setIsAuthenticated(false);
+    setIsAdmin(false);
+    
+    // Navigate to sign in
+    navigate('/signin');
+  };
 
   const value = {
     isAuthenticated,

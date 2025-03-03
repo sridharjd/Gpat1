@@ -213,55 +213,66 @@ const MockTestResult = () => {
         <Divider sx={{ mb: 2 }} />
 
         <List>
-          {Object.keys(testResult.answers).map((questionId, index) => (
-            <React.Fragment key={questionId}>
-              <ListItem alignItems="flex-start">
-                <ListItemText
-                  primary={
-                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                      <Typography variant="subtitle1" component="span">
-                        Question {questionId}: {QUESTION_BANK[questionId] || `Question ${questionId}`}
-                      </Typography>
-                      {testResult.answers[questionId] === CORRECT_ANSWERS[questionId] ? (
-                        <CheckCircleIcon color="success" sx={{ ml: 1 }} />
-                      ) : (
-                        <CancelIcon color="error" sx={{ ml: 1 }} />
-                      )}
-                    </Box>
-                  }
-                  secondary={
-                    <React.Fragment>
-                      <Box sx={{ mt: 1 }}>
-                        <Typography component="span" variant="body2" color="text.primary">
-                          Your Answer: 
+          {(() => {
+            // Diagnostic logging for test result answers
+            console.log('Test Result Answers Object:', testResult.answers);
+            console.log('Total Questions in Result:', Object.keys(testResult.answers).length);
+            console.log('Question IDs in Result:', Object.keys(testResult.answers));
+            
+            // Log types of question IDs to check for potential type mismatches
+            const questionIdTypes = Object.keys(testResult.answers).map(id => typeof id);
+            console.log('Question ID Types in Result:', questionIdTypes);
+
+            return Object.keys(testResult.answers).map((questionId, index) => (
+              <React.Fragment key={questionId}>
+                <ListItem alignItems="flex-start">
+                  <ListItemText
+                    primary={
+                      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                        <Typography variant="subtitle1" component="span">
+                          Question {questionId}: {QUESTION_BANK[questionId] || `Question ${questionId}`}
                         </Typography>
-                        <Chip 
-                          label={`${testResult.answers[questionId]}: ${ANSWER_OPTIONS[questionId]?.[testResult.answers[questionId]] || testResult.answers[questionId]}`} 
-                          color={testResult.answers[questionId] === CORRECT_ANSWERS[questionId] ? "success" : "error"}
-                          size="small"
-                          sx={{ ml: 1 }}
-                        />
+                        {testResult.answers[questionId] === CORRECT_ANSWERS[questionId] ? (
+                          <CheckCircleIcon color="success" sx={{ ml: 1 }} />
+                        ) : (
+                          <CancelIcon color="error" sx={{ ml: 1 }} />
+                        )}
                       </Box>
-                      {testResult.answers[questionId] !== CORRECT_ANSWERS[questionId] && (
+                    }
+                    secondary={
+                      <React.Fragment>
                         <Box sx={{ mt: 1 }}>
                           <Typography component="span" variant="body2" color="text.primary">
-                            Correct Answer: 
+                            Your Answer: 
                           </Typography>
                           <Chip 
-                            label={`${CORRECT_ANSWERS[questionId]}: ${ANSWER_OPTIONS[questionId]?.[CORRECT_ANSWERS[questionId]] || CORRECT_ANSWERS[questionId]}`} 
-                            color="primary"
+                            label={`${testResult.answers[questionId]}: ${ANSWER_OPTIONS[questionId]?.[testResult.answers[questionId]] || testResult.answers[questionId]}`} 
+                            color={testResult.answers[questionId] === CORRECT_ANSWERS[questionId] ? "success" : "error"}
                             size="small"
                             sx={{ ml: 1 }}
                           />
                         </Box>
-                      )}
-                    </React.Fragment>
-                  }
-                />
-              </ListItem>
-              {index < Object.keys(testResult.answers).length - 1 && <Divider component="li" />}
-            </React.Fragment>
-          ))}
+                        {testResult.answers[questionId] !== CORRECT_ANSWERS[questionId] && (
+                          <Box sx={{ mt: 1 }}>
+                            <Typography component="span" variant="body2" color="text.primary">
+                              Correct Answer: 
+                            </Typography>
+                            <Chip 
+                              label={`${CORRECT_ANSWERS[questionId]}: ${ANSWER_OPTIONS[questionId]?.[CORRECT_ANSWERS[questionId]] || CORRECT_ANSWERS[questionId]}`} 
+                              color="primary"
+                              size="small"
+                              sx={{ ml: 1 }}
+                            />
+                          </Box>
+                        )}
+                      </React.Fragment>
+                    }
+                  />
+                </ListItem>
+                {index < Object.keys(testResult.answers).length - 1 && <Divider component="li" />}
+              </React.Fragment>
+            ));
+          })()}
         </List>
 
         <Box sx={{ mt: 3, display: 'flex', justifyContent: 'space-between' }}>
