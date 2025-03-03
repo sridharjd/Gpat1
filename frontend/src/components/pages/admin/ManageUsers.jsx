@@ -60,8 +60,8 @@ const ManageUsers = () => {
 
   const handleDeleteConfirm = async () => {
     try {
-      await apiService.admin.deleteUser(selectedUser._id);
-      setUsers(users.filter(user => user._id !== selectedUser._id));
+      await apiService.admin.deleteUser(selectedUser.id);
+      setUsers(users.filter(user => user.id !== selectedUser.id));
       setDeleteDialogOpen(false);
       setSelectedUser(null);
     } catch (error) {
@@ -113,7 +113,7 @@ const ManageUsers = () => {
             </TableHead>
             <TableBody>
               {users.map((user) => (
-                <TableRow key={user._id}>
+                <TableRow key={user.id}>
                   <TableCell>{`${user.firstName} ${user.lastName}`}</TableCell>
                   <TableCell>{user.email}</TableCell>
                   <TableCell>
@@ -133,7 +133,7 @@ const ManageUsers = () => {
                   <TableCell align="right">
                     <IconButton
                       size="small"
-                      onClick={() => navigate(`/admin/users/${user._id}/edit`)}
+                      onClick={() => navigate(`/admin/users/${user.id}/edit`)}
                     >
                       <EditIcon />
                     </IconButton>

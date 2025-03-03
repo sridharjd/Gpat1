@@ -35,11 +35,20 @@ const AdminDashboard = () => {
   const fetchUsers = async () => {
     try {
       const response = await apiService.admin.getUsers();
-      setUsers(response.data);
-      console.log('Users fetched successfully:', response.data);
+      if (response.data && response.data.success && Array.isArray(response.data.data)) {
+        setUsers(response.data.data);
+        console.log('Users fetched successfully:', response.data.data);
+      } else {
+        setError('Invalid response format from server');
+        console.error('Invalid response format:', response.data);
+        // Initialize with empty array to prevent map errors
+        setUsers([]);
+      }
     } catch (error) {
       setError('Error fetching users');
       console.error('Error fetching users:', error);
+      // Initialize with empty array to prevent map errors
+      setUsers([]);
     }
   };
 

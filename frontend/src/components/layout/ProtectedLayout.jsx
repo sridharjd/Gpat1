@@ -8,16 +8,15 @@ const ProtectedLayout = ({
   redirectPath = '/signin',
   isLoading = false
 }) => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user, isAdmin: userIsAdmin } = useAuth();
   const location = useLocation();
 
-  // Add a useEffect to avoid the console error during logout
-  useEffect(() => {
-    // This is just to silence the error during component unmounting
-    return () => {
-      // Cleanup function
-    };
-  }, []);
+  console.log('ProtectedLayout - Authentication Details:', {
+    isAuthenticated,
+    isAdmin,
+    userIsAdmin,
+    currentPath: location.pathname
+  });
 
   if (isLoading) {
     return (
@@ -28,24 +27,17 @@ const ProtectedLayout = ({
   }
 
   if (!isAuthenticated) {
-    // Only log the error if we're not already on the signin page or just navigated from a protected route
-    if (!location.pathname.includes('signin')) {
-      console.error('Unauthorized access attempt. Redirecting to sign-in.');
-    }
+    console.error('Not authenticated. Redirecting to sign-in.');
     return <Navigate to={redirectPath} replace />;
   }
 
-  // For admin routes, check admin status
-  if (isAdmin) {
-    // No change needed here
-  }
-
-  try {
-    return <Outlet />;
-  } catch (error) {
-    console.error('An error occurred while rendering the outlet:', error); 
+  // For admin routes, explicitly check admin status
+  if (isAdmin && !userIsAdmin) {
+    console.error('Unauthorized admin access attempt.');
     return <Navigate to={redirectPath} replace />;
   }
+
+  return <Outlet />;
 };
 
 export default ProtectedLayout;

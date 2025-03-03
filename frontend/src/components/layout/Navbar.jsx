@@ -52,34 +52,51 @@ const Navbar = () => {
       // Perform logout
       logout();
       
+      // Clear any stored authentication data
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      
       // Navigate immediately to ensure the user is redirected
       navigate('/signin');
       console.log('User logged out successfully.');
       
-      // Force a page refresh to clear any remaining state
+      // Optional: Force a page refresh to clear any remaining state
       window.location.reload();
     } catch (error) {
       console.error('Error during logout:', error);
+      // Optionally, show a user-friendly error message
+      // You might want to use a toast or snackbar notification
     }
   };
 
   const handleNavigation = (path) => {
-    navigate(path);
+    try {
+      console.log(`Navigating to: ${path}`);
+      
+      // Check admin routes
+      if (path.startsWith('/admin/') && !isAdmin) {
+        console.error('Unauthorized admin route access');
+        navigate('/signin');
+        return;
+      }
+      
+      navigate(path);
+    } catch (error) {
+      console.error(`Navigation error to ${path}:`, error);
+      // Optionally, show a user-friendly error message
+    }
   };
 
   const publicPages = [
     { title: 'Home', path: '/' },
-    { title: 'Exam Info', path: '/exam-info' },
     { title: 'Syllabus', path: '/syllabus' },
     { title: 'About', path: '/about' },
     { title: 'Contact', path: '/contact' }
   ];
 
   const adminPages = [
-    { title: 'Dashboard', path: '/admin' },
-    { title: 'Upload Questions', path: '/admin/upload-questions' },
-    { title: 'Manage Users', path: '/admin/users' },
-    { title: 'Reports', path: '/admin/reports' }
+    { title: 'Dashboard', path: '/admin/dashboard' },
+    { title: 'Upload Questions', path: '/admin/upload-questions' }
   ];
 
   const userPages = [
@@ -175,15 +192,18 @@ const Navbar = () => {
               {page.title}
             </Button>
           ))}
-          {isAuthenticated && menuItems.map((item) => (
-            <Button
-              key={item.label}
-              onClick={() => handleNavigation(item.path)}
-              sx={{ color: 'white', display: 'block' }}
-            >
-              {item.label}
-            </Button>
-          ))}
+          {isAuthenticated && menuItems
+            .filter(item => !item.path.startsWith('/admin/') || isAdmin)
+            .map((item) => (
+              <Button
+                key={item.label}
+                onClick={() => handleNavigation(item.path)}
+                sx={{ color: 'white', display: 'block' }}
+              >
+                {item.label}
+              </Button>
+            ))
+          }
         </Box>
 
         <Box sx={{ display: { xs: 'none', md: 'flex' } }}>

@@ -90,56 +90,6 @@ const getTestFilters = async (req, res) => {
   }
 };
 
-// Get exam information
-const getExamInfo = async (req, res) => {
-  try {
-    // Replace with actual query to fetch exam info
-    const [examInfo] = await db.query('SELECT * FROM exams');
-    res.status(200).json({
-      success: true,
-      data: examInfo
-    });
-  } catch (error) {
-    handleError(res, error, 'Failed to fetch exam information');
-  }
-};
-
-// Get exam information details
-const getExamInfoDetails = async (req, res) => {
-  try {
-    const { examId } = req.params;
-    
-    // Get basic exam info
-    const [examInfo] = await db.query(
-      'SELECT * FROM exams WHERE id = ?',
-      [examId]
-    );
-    
-    if (!examInfo || examInfo.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Exam not found'
-      });
-    }
-    
-    // Get exam syllabus
-    const [syllabus] = await db.query(
-      'SELECT * FROM exam_syllabus WHERE exam_id = ?',
-      [examId]
-    );
-    
-    res.status(200).json({
-      success: true,
-      data: {
-        ...examInfo[0],
-        syllabus: syllabus || []
-      }
-    });
-  } catch (error) {
-    handleError(res, error, 'Failed to fetch exam information details');
-  }
-};
-
 // Submit test
 const submitTest = async (req, res) => {
   try {
@@ -350,12 +300,56 @@ const getTestById = async (req, res) => {
   }
 };
 
+// Get test statistics
+const getTestStats = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    // Get overall test statistics
+    const [overallStats] = await db.query(
+      `SELECT 
+        COUNT(*) as total_tests,
+        AVG(score) as average_score,
+        MAX(score) as highest_score,
+        SUM(total_questions) as total_questions_attempted,
+        AVG(time_taken) as average_time
+      FROM test_results
+      WHERE user_id = ?`,
+      [userId]
+    );
+    
+    // Get subject-wise statistics
+    const [subjectStats] = await db.query(
+      `SELECT 
+        s.name as subject_name,
+        COUNT(tr.id) as tests_taken,
+        AVG(tr.score) as average_score
+      FROM test_results tr
+      JOIN subjects s ON tr.subject_id = s.id
+      WHERE tr.user_id = ?
+      GROUP BY tr.subject_id
+      ORDER BY average_score DESC`,
+      [userId]
+    );
+    
+    res.json({
+      success: true,
+      data: {
+        overall: overallStats[0],
+        subjects: subjectStats
+      }
+    });
+  } catch (error) {
+    handleError(res, error, 'Error fetching test statistics');
+  }
+};
+
+// Export all functions
 module.exports = {
   getTestQuestions,
-  submitTest,
   getTestFilters,
-  getExamInfo,
-  getExamInfoDetails,
+  submitTest,
   getTestHistory,
-  getTestById
+  getTestById,
+  getTestStats
 };

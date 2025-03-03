@@ -10,6 +10,8 @@
   --text-secondary: #666666;
   --border-radius: 8px;
   --transition-speed: 0.3s;
+  --navbar-height: 64px;
+  --content-spacing: 80px;
 }
 
 body {
@@ -18,6 +20,22 @@ body {
   background-color: var(--background-color);
   color: var(--text-primary);
   font-family: 'Roboto', 'Helvetica', 'Arial', sans-serif;
+}
+
+/* Main Content Spacing */
+main {
+  padding-top: var(--content-spacing);
+  min-height: calc(100vh - var(--navbar-height));
+}
+
+/* Header Spacing */
+.MuiTypography-h1,
+.MuiTypography-h2,
+.MuiTypography-h3,
+.MuiTypography-h4,
+.MuiTypography-h5,
+.MuiTypography-h6 {
+  margin-top: 1rem !important;
 }
 
 /* Card Styles */

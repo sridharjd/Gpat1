@@ -1,11 +1,29 @@
-const successResponse = (res, data, statusCode = 200) => {
-  res.status(statusCode).json({ success: true, data });
+
+const success = (res, message, data = null, statusCode = 200) => {
+  return res.status(statusCode).json({
+    success: true,
+    message,
+    data
+  });
 };
 
-const errorResponse = (res, error, statusCode = 500) => {
-  const errorMessage = error.message || 'An unknown error occurred';
-  console.error('Error response:', error); // Log the error object
-  res.status(statusCode).json({ success: false, message: errorMessage });
+const error = (res, message, error = null, statusCode = 500) => {
+  return res.status(statusCode).json({
+    success: false,
+    message,
+    error: error instanceof Error ? error.message : error
+  });
 };
 
-module.exports = { successResponse, errorResponse };
+const notFound = (res, message = 'Resource not found') => {
+  return res.status(404).json({
+    success: false,
+    message
+  });
+};
+
+module.exports = {
+  success,
+  error,
+  notFound
+};

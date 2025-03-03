@@ -1,7 +1,7 @@
 const express = require('express');
 const testController = require('../controllers/testController');
 const { protect } = require('../middleware/authMiddleware');
-const { asyncHandler } = require('../utils/asyncHandler');
+const asyncHandler = require('../utils/asyncHandler');
 
 const router = express.Router();
 
@@ -23,13 +23,6 @@ router.get('/filters', asyncHandler(testController.getTestFilters));
 router.get('/questions', asyncHandler(testController.getTestQuestions));
 
 /**
- * @route   GET /tests/exams/info
- * @desc    Get exam information
- * @access  Private
- */
-router.get('/exams/info', asyncHandler(testController.getExamInfo));
-
-/**
  * @route   POST /tests/submit
  * @desc    Submit a completed test
  * @access  Private
@@ -42,6 +35,13 @@ router.post('/submit', asyncHandler(testController.submitTest));
  * @access  Private
  */
 router.get('/history', asyncHandler(testController.getTestHistory));
+
+/**
+ * @route   GET /tests/stats
+ * @desc    Get user's test statistics
+ * @access  Private
+ */
+router.get('/stats', asyncHandler(testController.getTestStats));
 
 /**
  * @route   GET /tests/:id

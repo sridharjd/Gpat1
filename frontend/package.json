@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
-    "@emotion/react": "^11.11.1",
-    "@emotion/styled": "^11.11.0",
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.0",
     "@mui/icons-material": "^5.14.18",
     "@mui/material": "^5.14.18",
     "axios": "^1.7.9",
@@ -12,6 +12,7 @@
     "cra-template": "1.2.0",
     "file-saver": "^2.0.5",
     "formik": "^2.4.5",
+    "framer-motion": "^12.4.7",
     "jspdf": "^2.5.1",
     "jspdf-autotable": "^3.5.31",
     "react": "^19.0.0",

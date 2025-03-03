@@ -32,6 +32,7 @@ const theme = createTheme({
     h3: {
       fontSize: '1.75rem',
       fontWeight: 500,
+      marginTop: '1em'
     },
     h4: {
       fontSize: '1.5rem',
@@ -58,6 +59,13 @@ const theme = createTheme({
       styleOverrides: {
         root: {
           borderRadius: 8,
+        },
+      },
+    },
+    MuiContainer: {
+      styleOverrides: {
+        root: {
+          paddingTop: '80px', // Increased from 64px to add more space
         },
       },
     },

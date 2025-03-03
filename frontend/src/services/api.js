@@ -9,6 +9,9 @@ const api = axios.create({
   timeout: 10000 // 10 seconds timeout
 });
 
+// Get the base URL for direct downloads
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+
 // Add a request interceptor
 api.interceptors.request.use(
   (config) => {
@@ -158,11 +161,6 @@ const apiService = {
     getSettings: () => api.get('/users/settings')
   },
   
-  // Exam methods
-  exams: {
-    getInfo: () => api.get('/exams/info')
-  },
-  
   // Dashboard methods
   dashboard: {
     getPerformance: () => api.get('/dashboard/performance'),
@@ -172,11 +170,135 @@ const apiService = {
   
   // Admin methods
   admin: {
-    getUsers: () => api.get('/admin/users'),
-    updateUser: (id, userData) => api.put(`/admin/users/${id}`, userData),
-    deleteUser: (id) => api.delete(`/admin/users/${id}`),
-    getReports: (params) => api.get('/admin/reports', { params }),
-    getReportData: (params) => api.get('/admin/reports/data', { params })
+    getUsers: async () => {
+      try {
+        const response = await api.get('/admin/users');
+        return response;
+      } catch (error) {
+        console.error('Error fetching users:', error);
+        throw error;
+      }
+    },
+    
+    getReports: async (params) => {
+      try {
+        const response = await api.get('/admin/reports', { params });
+        return response;
+      } catch (error) {
+        console.error('Error fetching reports:', error);
+        throw error;
+      }
+    },
+
+    getUserById: async (id) => {
+      try {
+        const response = await api.get(`/admin/users/${id}`);
+        return response;
+      } catch (error) {
+        console.error('Error fetching user:', error);
+        throw error;
+      }
+    },
+
+    createUser: async (userData) => {
+      try {
+        const response = await api.post('/admin/users', userData);
+        return response;
+      } catch (error) {
+        console.error('Error creating user:', error);
+        throw error;
+      }
+    },
+
+    updateUser: async (id, userData) => {
+      try {
+        const response = await api.put(`/admin/users/${id}`, userData);
+        return response;
+      } catch (error) {
+        console.error('Error updating user:', error);
+        throw error;
+      }
+    },
+
+    deleteUser: async (id) => {
+      try {
+        const response = await api.delete(`/admin/users/${id}`);
+        return response;
+      } catch (error) {
+        console.error('Error deleting user:', error);
+        throw error;
+      }
+    },
+    
+    getTestStats: async () => {
+      try {
+        const response = await api.get('/admin/test-stats');
+        return response;
+      } catch (error) {
+        console.error('Error fetching test statistics:', error);
+        throw error;
+      }
+    },
+    
+    exportReport: async (type, format, range = 'month') => {
+      try {
+        // For direct download, we need to use a different approach
+        window.open(`${API_URL}/admin/reports/export?type=${type}&format=${format}&range=${range}`, '_blank');
+        return { success: true };
+      } catch (error) {
+        console.error('Error exporting report:', error);
+        throw error;
+      }
+    },
+    
+    exportUsers: async (format = 'csv') => {
+      try {
+        if (format === 'server') {
+          // For server-side export (CSV download)
+          window.open(`${API_URL}/admin/users/export`, '_blank');
+          return { success: true };
+        } else {
+          // For client-side export (JSON data for Excel/PDF)
+          const response = await api.get('/admin/users/export?format=json');
+          return response;
+        }
+      } catch (error) {
+        console.error('Error exporting users:', error);
+        throw error;
+      }
+    },
+    
+    exportTestStats: async (format = 'csv') => {
+      try {
+        if (format === 'server') {
+          // For server-side export (CSV download)
+          window.open(`${API_URL}/admin/test-stats/export`, '_blank');
+          return { success: true };
+        } else {
+          // For client-side export (JSON data for Excel/PDF)
+          const response = await api.get('/admin/test-stats/export?format=json');
+          return response;
+        }
+      } catch (error) {
+        console.error('Error exporting test statistics:', error);
+        throw error;
+      }
+    },
+    
+    uploadQuestions: async (formData) => {
+      try {
+        // Use different headers for FormData
+        const response = await api.post('/questions/update_questions', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
+        });
+        return response;
+      } catch (error) {
+        console.error('Error uploading questions:', error);
+        throw error;
+      }
+    }
   },
   
   // Contact methods

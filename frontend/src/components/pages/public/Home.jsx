@@ -173,9 +173,9 @@ const Home = () => {
                     <Button
                       variant="outlined"
                       color="primary"
-                      onClick={() => navigate('/exam-info/gpat')}
+                      onClick={() => navigate('/syllabus')}
                     >
-                      Learn More
+                      View Syllabus
                     </Button>
                   </CardContent>
                 </Card>
@@ -198,9 +198,9 @@ const Home = () => {
                     <Button
                       variant="outlined"
                       color="primary"
-                      onClick={() => navigate('/exam-info/niper')}
+                      onClick={() => navigate('/syllabus')}
                     >
-                      Learn More
+                      View Syllabus
                     </Button>
                   </CardContent>
                 </Card>
@@ -223,9 +223,9 @@ const Home = () => {
                     <Button
                       variant="outlined"
                       color="primary"
-                      onClick={() => navigate('/exam-info/others')}
+                      onClick={() => navigate('/syllabus')}
                     >
-                      Learn More
+                      View Syllabus
                     </Button>
                   </CardContent>
                 </Card>

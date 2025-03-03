@@ -21,14 +21,15 @@ const SignIn = () => {
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
-  const { login, isAuthenticated, loading, error: authError } = useAuth();
+  const { login, isAuthenticated, loading, error: authError, isAdmin } = useAuth();
 
   // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated) {
-      navigate('/dashboard');
+      const redirectPath = isAdmin ? '/admin/dashboard' : '/dashboard';
+      navigate(redirectPath);
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, isAdmin, navigate]);
 
   // Set error from auth context
   useEffect(() => {
@@ -43,8 +44,9 @@ const SignIn = () => {
       const result = await login(values);
       
       if (result && result.success) {
-        // Force a reload to ensure the app recognizes the authenticated state
-        window.location.href = '/dashboard';
+        // Redirect admin users to admin dashboard, regular users to user dashboard
+        const redirectPath = result.user.isAdmin ? '/admin/dashboard' : '/dashboard';
+        window.location.href = redirectPath;
       } else {
         setError(result?.error || 'Failed to sign in. Please try again.');
       }

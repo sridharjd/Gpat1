@@ -18,21 +18,22 @@ const getInitialAuthState = () => {
         return {
           isAuthenticated: true,
           user,
-          token
+          token,
+          isAdmin: user.isAdmin || false
         };
       } catch (e) {
         console.error('Error parsing stored user:', e);
+        // Clear invalid data
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
       }
     }
-    
-    // Clear any invalid data
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
     
     return {
       isAuthenticated: false,
       user: null,
-      token: null
+      token: null,
+      isAdmin: false
     };
   } catch (error) {
     console.error('Error retrieving auth state:', error);
@@ -42,7 +43,8 @@ const getInitialAuthState = () => {
     return {
       isAuthenticated: false,
       user: null,
-      token: null
+      token: null,
+      isAdmin: false
     };
   }
 };
@@ -54,7 +56,7 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(false);
   const [token, setToken] = useState(initialState.token);
   const [error, setError] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(initialState.user?.isAdmin || false);
+  const [isAdmin, setIsAdmin] = useState(initialState.isAdmin);
 
   // Check auth status on mount and when token changes
   useEffect(() => {
@@ -64,62 +66,54 @@ export const AuthProvider = ({ children }) => {
   }, [token]);
 
   const checkAuthStatus = async () => {
-    if (!token) return false;
-    
+    const storedToken = localStorage.getItem('token');
+    const storedUser = localStorage.getItem('user');
+
+    if (!storedToken || !storedUser) {
+      // Clear everything if token or user is missing
+      clearAuthState();
+      return false;
+    }
+
     try {
       setLoading(true);
       
-      // Get the stored user
-      const storedUser = localStorage.getItem('user');
-      if (!storedUser) {
-        throw new Error('No user found');
-      }
+      // Validate the stored user
+      const parsedUser = JSON.parse(storedUser);
       
-      const user = JSON.parse(storedUser);
-      setUser(user);
+      if (!parsedUser || !parsedUser.id) {
+        throw new Error('Invalid user data');
+      }
+
+      // Optional: Add a backend token validation if needed
+      // const isValidToken = await apiService.validateToken(storedToken);
+      // if (!isValidToken) throw new Error('Invalid token');
+
+      // Update state
+      setToken(storedToken);
+      setUser(parsedUser);
       setIsAuthenticated(true);
-      setIsAdmin(user.isAdmin);
+      setIsAdmin(parsedUser.isAdmin || false);
       setError(null);
+
       return true;
     } catch (error) {
       console.error('Auth check failed:', error);
-      // If the token is invalid, clear everything
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      setToken(null);
-      setIsAuthenticated(false);
-      setUser(null);
-      setIsAdmin(false);
-      setError('Session expired. Please sign in again.');
+      clearAuthState();
       return false;
     } finally {
       setLoading(false);
     }
   };
 
-  // Create a mock JWT token for development/testing
-  const createMockJWT = (user) => {
-    // Create a JWT-like structure with three parts
-    const header = { alg: 'HS256', typ: 'JWT' };
-    const payload = {
-      id: user.id,
-      isAdmin: user.isAdmin,
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + (60 * 60)
-    };
-    
-    // Base64Url encode the parts
-    const base64Url = (obj) => {
-      const str = JSON.stringify(obj);
-      const base64 = Buffer.from(str).toString('base64');
-      return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    };
-    
-    const headerBase64 = base64Url(header);
-    const payloadBase64 = base64Url(payload);
-    const signature = base64Url('mock_signature');
-    
-    return `${headerBase64}.${payloadBase64}.${signature}`;
+  const clearAuthState = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setToken(null);
+    setUser(null);
+    setIsAuthenticated(false);
+    setIsAdmin(false);
+    setError('Session expired. Please sign in again.');
   };
 
   const login = async (credentials) => {
@@ -129,45 +123,67 @@ export const AuthProvider = ({ children }) => {
       
       const response = await apiService.auth.login(credentials);
       
-      if (response.data.success) {
-        const { token, user } = response.data;
-        
-        // Store token and user in localStorage
-        localStorage.setItem('token', token);
-        localStorage.setItem('user', JSON.stringify(user));
-        
-        // Update state
-        setToken(token);
-        setUser(user);
-        setIsAuthenticated(true);
-        setIsAdmin(user.isAdmin);
-        
-        return { success: true, user };
-      } else {
-        throw new Error(response.data.message || 'Login failed');
+      if (!response.data || !response.data.token || !response.data.user) {
+        throw new Error('Invalid login response');
       }
+
+      const { token, user } = response.data;
+      
+      // Prepare user object for storage
+      const userToStore = {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        isAdmin: user.isAdmin || false
+      };
+
+      // Store token and user in localStorage
+      localStorage.setItem('token', token);
+      localStorage.setItem('user', JSON.stringify(userToStore));
+      
+      // Update state
+      setToken(token);
+      setUser(userToStore);
+      setIsAuthenticated(true);
+      setIsAdmin(userToStore.isAdmin);
+      
+      return { 
+        success: true, 
+        user: userToStore 
+      };
     } catch (error) {
       console.error('Login error:', error);
+      
+      // Clear any potentially invalid data
+      clearAuthState();
+      
       setError(error.message || 'Login failed. Please try again.');
-      return false;
+      return { 
+        success: false, 
+        error: error.message 
+      };
     } finally {
       setLoading(false);
     }
   };
 
-  const logout = () => {
-    // Clear auth state
-    setIsAuthenticated(false);
-    setUser(null);
-    setToken(null);
-    setIsAdmin(false);
-    
-    // Clear stored tokens
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    
-    return { success: true };
-  };
+  const logout = useCallback(() => {
+    try {
+      // Optional: Call backend logout endpoint if needed
+      // await apiService.auth.logout();
+      
+      // Clear auth state
+      clearAuthState();
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Logout error:', error);
+      return { 
+        success: false, 
+        error: error.message 
+      };
+    }
+  }, []);
 
   const value = {
     isAuthenticated,

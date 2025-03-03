@@ -27,13 +27,11 @@ import Profile from './components/pages/user/Profile';
 import Settings from './components/pages/user/Settings';
 
 // Admin Pages
-import AdminDashboard from './components/pages/admin/Dashboard';
-import ManageUsers from './components/pages/admin/ManageUsers';
+import AdminDashboard from './components/pages/admin/AdminDashboard';
 import UploadQuestions from './components/pages/admin/UploadQuestions';
 
 // Public Pages
 import Home from './components/pages/public/Home';
-import ExamInfo from './components/pages/public/ExamInfo';
 import Syllabus from './components/pages/public/Syllabus';
 import About from './components/pages/public/About';
 import Contact from './components/pages/public/Contact';
@@ -62,7 +60,6 @@ const AppRoutes = () => {
       <Routes>
         {/* Public Routes */}
         <Route path="/" element={<Home />} />
-        <Route path="/exam-info" element={<ExamInfo />} />
         <Route path="/syllabus" element={<Syllabus />} />
         <Route path="/about" element={<About />} />
         <Route path="/contact" element={<Contact />} />
@@ -90,17 +87,8 @@ const AppRoutes = () => {
         </Route>
 
         {/* Admin Routes */}
-        <Route 
-          element={
-            <ProtectedLayout 
-              isAuthenticated={isAuthenticated} 
-              isAdmin={isAdmin}
-              isLoading={loading}
-            />
-          }
-        >
+        <Route element={<ProtectedLayout isAdmin={true} />}>
           <Route path="/admin/dashboard" element={<AdminDashboard />} />
-          <Route path="/admin/users" element={<ManageUsers />} />
           <Route path="/admin/upload-questions" element={<UploadQuestions />} />
         </Route>
 

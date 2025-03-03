@@ -107,31 +107,64 @@ const updateQuestionsFromFile = async (req, res) => {
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const data = xlsx.utils.sheet_to_json(sheet);
 
-    // Validate and insert each row
-    for (const row of data) {
-      const { year, subject, question, answer, option1, option2, option3, option4, degree } = row;
+    if (data.length === 0) {
+      return res.status(400).json({ message: 'The uploaded file contains no data.' });
+    }
 
-      // Check if subject is provided
-      if (!subject) {
-        return res.status(400).json({ message: `Subject is missing for question: ${question}` });
+    // Validate and insert each row
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const rowNumber = i + 2; // Excel row number (1-indexed + header row)
+      
+      // Check for required fields
+      if (!row.question) {
+        return res.status(400).json({ message: `Row ${rowNumber}: Missing question` });
+      }
+      
+      if (!row.subject) {
+        return res.status(400).json({ message: `Row ${rowNumber}: Missing subject for question: "${row.question.substring(0, 30)}..."` });
+      }
+      
+      if (!row.year) {
+        return res.status(400).json({ message: `Row ${rowNumber}: Missing year for question: "${row.question.substring(0, 30)}..."` });
+      }
+      
+      if (!row.answer) {
+        return res.status(400).json({ message: `Row ${rowNumber}: Missing answer for question: "${row.question.substring(0, 30)}..."` });
+      }
+      
+      if (!row.option1 || !row.option2 || !row.option3 || !row.option4) {
+        return res.status(400).json({ 
+          message: `Row ${rowNumber}: Missing one or more options for question: "${row.question.substring(0, 30)}..."` 
+        });
       }
 
       // Get subject_id from subjects table using subject name
-      const [subjectResult] = await db.query('SELECT id FROM subjects WHERE name = ?', [subject]);
+      const [subjectResult] = await db.query('SELECT id FROM subjects WHERE name = ?', [row.subject]);
       if (!subjectResult.length) {
-        return res.status(400).json({ message: `Invalid subject: ${subject} for question: ${question}` });
+        return res.status(400).json({ 
+          message: `Row ${rowNumber}: Invalid subject: "${row.subject}" for question: "${row.question.substring(0, 30)}..."` 
+        });
       }
 
       const subject_id = subjectResult[0].id;
 
+      // Validate that answer is one of the options
+      const answer = row.answer.toString().toUpperCase();
+      if (!['A', 'B', 'C', 'D'].includes(answer)) {
+        return res.status(400).json({ 
+          message: `Row ${rowNumber}: Invalid answer format. Must be A, B, C, or D for question: "${row.question.substring(0, 30)}..."` 
+        });
+      }
+
       // Insert the question into the database
       await db.query(
         'INSERT INTO pyq_questions (year, subject_id, question, answer, option1, option2, option3, option4, degree) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [year, subject_id, question, answer, option1, option2, option3, option4, degree]
+        [row.year, subject_id, row.question, answer, row.option1, row.option2, row.option3, row.option4, row.degree || null]
       );
     }
 
-    res.json({ message: 'Questions updated successfully.' });
+    res.json({ message: `${data.length} questions uploaded successfully.` });
   } catch (error) {
     console.error('Error updating questions:', error);
     handleError(res, error, 'Error updating questions.');
