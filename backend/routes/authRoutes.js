@@ -1,16 +1,28 @@
 const express = require('express');
 const router = express.Router();
-const asyncHandler = require('../utils/asyncHandler');
+const { protect } = require('../middleware/authMiddleware');
 const { 
-  signUp, 
   signIn, 
-  forgotPassword, 
-  resetPassword 
+  signUp, 
+  getCurrentUser, 
+  refreshToken, 
+  signOut,
+  changePassword,
+  resendVerification,
+  verifyEmail
 } = require('../controllers/authController');
 
-router.post('/signup', asyncHandler(signUp));
-router.post('/signin', asyncHandler(signIn));
-router.post('/forgot-password', asyncHandler(forgotPassword));
-router.post('/reset-password', asyncHandler(resetPassword));
+// Public routes
+router.post('/signin', signIn);
+router.post('/signup', signUp);
+router.post('/refresh-token', refreshToken);
+router.post('/resend-verification', resendVerification);
+router.get('/verify-email/:token', verifyEmail);
+
+// Protected routes
+router.use(protect); // Apply authentication middleware to all routes below
+router.get('/me', getCurrentUser);
+router.post('/signout', signOut);
+router.post('/change-password', changePassword);
 
 module.exports = router;

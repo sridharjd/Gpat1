@@ -1,5 +1,10 @@
-const db = require('../config/db');
+const db = require('../config/db').pool;
 const xlsx = require('xlsx');
+const logger = require('../config/logger');
+const { ApiError } = require('../utils/errors');
+const { catchAsync } = require('../utils/errors');
+const { validateQuestion } = require('../utils/validation');
+const cache = require('../config/cache');
 
 // Function to handle errors
 const handleError = (res, error, message, statusCode = 500) => {
@@ -7,169 +12,510 @@ const handleError = (res, error, message, statusCode = 500) => {
   res.status(statusCode).json({ message, error: error.message });
 };
 
-// Function to get all questions
-const getAllQuestions = async (req, res) => {
-  try {
-    const [questions] = await db.query('SELECT * FROM pyq_questions');
-    res.json(questions);
-  } catch (error) {
-    handleError(res, error, 'Error fetching questions');
+// Get all questions with pagination and caching
+const getAllQuestions = catchAsync(async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 50;
+  const offset = (page - 1) * limit;
+
+  // Try to get from cache first
+  const cacheKey = `questions:all:${page}:${limit}`;
+  const cachedResult = await cache.get(cacheKey);
+  
+  if (cachedResult) {
+    return res.json(JSON.parse(cachedResult));
   }
-};
 
-// Function to get questions by filters
-const getQuestionsByFilters = async (req, res) => {
-  const { subject_id, year, user_id } = req.query;
+  // Get total count
+  const [countResult] = await db.query('SELECT COUNT(*) as total FROM pyq_questions WHERE is_active = true');
+  const total = countResult[0].total;
 
-  try {
-    let query = `
-      SELECT q.*, s.name AS subject_name
-      FROM pyq_questions q
-      LEFT JOIN subjects s ON q.subject_id = s.id
-      WHERE 1=1
-    `;
-    const params = [];
+  // Get paginated questions
+  const [questions] = await db.query(`
+    SELECT 
+      q.*,
+      s.name as subject_name,
+      s.code as subject_code
+    FROM pyq_questions q
+    LEFT JOIN subjects s ON q.subject_id = s.id
+    WHERE q.is_active = true
+    ORDER BY q.created_at DESC
+    LIMIT ? OFFSET ?
+  `, [limit, offset]);
 
-    if (subject_id) {
-      query += ' AND q.subject_id IN (?)';
-      params.push(subject_id.split(','));
-    }
+  const result = {
+    success: true,
+    pagination: {
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit)
+    },
+    questions
+  };
 
-    if (year) {
-      query += ' AND q.year IN (?)';
-      params.push(year.split(','));
-    }
+  // Cache for 5 minutes
+  await cache.set(cacheKey, JSON.stringify(result), 300);
 
-    const [questions] = await db.query(query, params);
-    res.json(questions);
-  } catch (error) {
-    console.error('Error fetching questions:', error);
-    handleError(res, error, 'Error fetching questions');
+  res.json(result);
+});
+
+// Get questions by filters with caching
+const getQuestionsByFilters = catchAsync(async (req, res) => {
+  const { subject_id, year, difficulty, search } = req.query;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 50;
+  const offset = (page - 1) * limit;
+
+  // Generate cache key based on filters
+  const cacheKey = `questions:filtered:${JSON.stringify(req.query)}`;
+  const cachedResult = await cache.get(cacheKey);
+
+  if (cachedResult) {
+    return res.json(JSON.parse(cachedResult));
   }
-};
 
-// Function to get unique years
-const getUniqueYears = async (req, res) => {
-  try {
-    const [years] = await db.query('SELECT DISTINCT year FROM pyq_questions ORDER BY year DESC');
-    res.json(years.map((row) => row.year));
-  } catch (error) {
-    handleError(res, error, 'Error fetching years');
+  let query = `
+    SELECT 
+      q.*,
+      s.name AS subject_name,
+      s.code AS subject_code
+    FROM pyq_questions q
+    LEFT JOIN subjects s ON q.subject_id = s.id
+    WHERE q.is_active = true
+  `;
+  const params = [];
+
+  if (subject_id) {
+    query += ' AND q.subject_id IN (?)';
+    params.push(subject_id.split(','));
   }
-};
 
-// Function to get a question by ID
-const getQuestionById = async (req, res) => {
+  if (year) {
+    query += ' AND q.year IN (?)';
+    params.push(year.split(','));
+  }
+
+  if (difficulty) {
+    query += ' AND q.degree IN (?)';
+    params.push(difficulty.split(','));
+  }
+
+  if (search) {
+    query += ' AND (q.question LIKE ? OR q.option1 LIKE ? OR q.option2 LIKE ? OR q.option3 LIKE ? OR q.option4 LIKE ?)';
+    const searchTerm = `%${search}%`;
+    params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
+  }
+
+  // Get total count for pagination
+  const countQuery = query.replace('q.*, s.name AS subject_name, s.code AS subject_code', 'COUNT(*) as total');
+  const [countResult] = await db.query(countQuery, params);
+  const total = countResult[0].total;
+
+  // Add pagination
+  query += ' ORDER BY q.created_at DESC LIMIT ? OFFSET ?';
+  params.push(limit, offset);
+
+  const [questions] = await db.query(query, params);
+
+  const result = {
+    success: true,
+    pagination: {
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit)
+    },
+    questions
+  };
+
+  // Cache for 5 minutes
+  await cache.set(cacheKey, JSON.stringify(result), 300);
+
+  res.json(result);
+});
+
+// Get unique years with caching
+const getUniqueYears = catchAsync(async (req, res) => {
+  const cacheKey = 'questions:years';
+  const cachedYears = await cache.get(cacheKey);
+
+  if (cachedYears) {
+    return res.json(JSON.parse(cachedYears));
+  }
+
+  const [years] = await db.query(`
+    SELECT 
+      year,
+      COUNT(*) as question_count
+    FROM pyq_questions 
+    WHERE is_active = true
+    GROUP BY year 
+    ORDER BY year DESC
+  `);
+
+  const result = {
+    success: true,
+    years: years.map(row => ({
+      year: row.year,
+      questionCount: row.question_count
+    }))
+  };
+
+  // Cache for 1 hour
+  await cache.set(cacheKey, JSON.stringify(result), 3600);
+
+  res.json(result);
+});
+
+// Get question by ID with caching
+const getQuestionById = catchAsync(async (req, res) => {
   const { id } = req.params;
-  try {
-    const [question] = await db.query('SELECT * FROM pyq_questions WHERE id = ?', [id]);
-    res.json(question[0]);
-  } catch (error) {
-    handleError(res, error, 'Error fetching question');
-  }
-};
+  const cacheKey = `questions:${id}`;
+  const cachedQuestion = await cache.get(cacheKey);
 
-// Function to update a question
-const updateQuestion = async (req, res) => {
+  if (cachedQuestion) {
+    return res.json(JSON.parse(cachedQuestion));
+  }
+
+  const [questions] = await db.query(`
+    SELECT 
+      q.*,
+      s.name as subject_name,
+      s.code as subject_code,
+      u.username as created_by_user
+    FROM pyq_questions q
+    LEFT JOIN subjects s ON q.subject_id = s.id
+    LEFT JOIN users u ON q.created_by = u.id
+    WHERE q.id = ? AND q.is_active = true
+  `, [id]);
+
+  if (!questions[0]) {
+    throw new ApiError('Question not found', 404);
+  }
+
+  const result = {
+    success: true,
+    question: questions[0]
+  };
+
+  // Cache for 1 hour
+  await cache.set(cacheKey, JSON.stringify(result), 3600);
+
+  res.json(result);
+});
+
+// Update question with validation
+const updateQuestion = catchAsync(async (req, res) => {
   const { id } = req.params;
-  const { question, subject_id, year, answer, option1, option2, option3, option4, degree } = req.body;
+  const updates = req.body;
 
-  try {
-    await db.query(
-      'UPDATE pyq_questions SET question = ?, subject_id = ?, year = ?, answer = ?, option1 = ?, option2 = ?, option3 = ?, option4 = ?, degree = ? WHERE id = ?',
-      [question, subject_id, year, answer, option1, option2, option3, option4, degree, id]
-    );
-    res.json({ message: 'Question updated successfully' });
-  } catch (error) {
-    handleError(res, error, 'Error updating question');
+  // Validate input
+  const validation = validateQuestion(updates);
+  if (!validation.isValid) {
+    throw new ApiError(validation.message, 400);
   }
-};
 
-// Function to delete a question
-const deleteQuestion = async (req, res) => {
+  // Check if question exists
+  const [existing] = await db.query(
+    'SELECT id FROM pyq_questions WHERE id = ? AND is_active = true',
+    [id]
+  );
+
+  if (!existing[0]) {
+    throw new ApiError('Question not found', 404);
+  }
+
+  // Update question
+  await db.query(`
+    UPDATE pyq_questions 
+    SET 
+      question = ?,
+      subject_id = ?,
+      year = ?,
+      answer = ?,
+      option1 = ?,
+      option2 = ?,
+      option3 = ?,
+      option4 = ?,
+      degree = ?,
+      updated_at = CURRENT_TIMESTAMP,
+      updated_by = ?
+    WHERE id = ? AND is_active = true
+  `, [
+    updates.question,
+    updates.subject_id,
+    updates.year,
+    updates.answer.toUpperCase(),
+    updates.option1,
+    updates.option2,
+    updates.option3,
+    updates.option4,
+    updates.degree,
+    req.user.id,
+    id
+  ]);
+
+  // Clear related caches
+  await Promise.all([
+    cache.del(`questions:${id}`),
+    cache.del('questions:all:*'),
+    cache.del('questions:filtered:*')
+  ]);
+
+  logger.info('Question updated successfully', {
+    questionId: id,
+    updatedBy: req.user.id
+  });
+
+  res.json({
+    success: true,
+    message: 'Question updated successfully'
+  });
+});
+
+// Soft delete question
+const deleteQuestion = catchAsync(async (req, res) => {
   const { id } = req.params;
-  try {
-    await db.query('DELETE FROM pyq_questions WHERE id = ?', [id]);
-    res.json({ message: 'Question deleted successfully' });
-  } catch (error) {
-    handleError(res, error, 'Error deleting question');
-  }
-};
 
-// Function to update questions from an Excel file
-const updateQuestionsFromFile = async (req, res) => {
+  // Check if question exists and is active
+  const [existing] = await db.query(
+    'SELECT id FROM pyq_questions WHERE id = ? AND is_active = true',
+    [id]
+  );
+
+  if (!existing[0]) {
+    throw new ApiError('Question not found', 404);
+  }
+
+  // Soft delete
+  await db.query(`
+    UPDATE pyq_questions 
+    SET 
+      is_active = false,
+      deleted_at = CURRENT_TIMESTAMP,
+      deleted_by = ?
+    WHERE id = ?
+  `, [req.user.id, id]);
+
+  // Clear related caches
+  await Promise.all([
+    cache.del(`questions:${id}`),
+    cache.del('questions:all:*'),
+    cache.del('questions:filtered:*'),
+    cache.del('questions:years')
+  ]);
+
+  logger.info('Question deleted successfully', {
+    questionId: id,
+    deletedBy: req.user.id
+  });
+
+  res.json({
+    success: true,
+    message: 'Question deleted successfully'
+  });
+});
+
+// Bulk upload questions from Excel with validation and transaction
+const updateQuestionsFromFile = catchAsync(async (req, res) => {
   if (!req.file) {
-    return res.status(400).json({ message: 'No file uploaded.' });
+    throw new ApiError('No file uploaded', 400);
   }
 
+  const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const data = xlsx.utils.sheet_to_json(sheet);
+
+  if (data.length === 0) {
+    throw new ApiError('The uploaded file contains no data', 400);
+  }
+
+  // Start transaction
+  const connection = await db.getConnection();
+  await connection.beginTransaction();
+
   try {
-    const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const data = xlsx.utils.sheet_to_json(sheet);
+    const results = {
+      total: data.length,
+      successful: 0,
+      failed: 0,
+      errors: []
+    };
 
-    if (data.length === 0) {
-      return res.status(400).json({ message: 'The uploaded file contains no data.' });
-    }
+    // Get all subjects for validation
+    const [subjects] = await connection.query('SELECT id, name FROM subjects');
+    const subjectMap = new Map(subjects.map(s => [s.name.toLowerCase(), s.id]));
 
-    // Validate and insert each row
+    // Process each row
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
       const rowNumber = i + 2; // Excel row number (1-indexed + header row)
-      
-      // Check for required fields
-      if (!row.question) {
-        return res.status(400).json({ message: `Row ${rowNumber}: Missing question` });
-      }
-      
-      if (!row.subject) {
-        return res.status(400).json({ message: `Row ${rowNumber}: Missing subject for question: "${row.question.substring(0, 30)}..."` });
-      }
-      
-      if (!row.year) {
-        return res.status(400).json({ message: `Row ${rowNumber}: Missing year for question: "${row.question.substring(0, 30)}..."` });
-      }
-      
-      if (!row.answer) {
-        return res.status(400).json({ message: `Row ${rowNumber}: Missing answer for question: "${row.question.substring(0, 30)}..."` });
-      }
-      
-      if (!row.option1 || !row.option2 || !row.option3 || !row.option4) {
-        return res.status(400).json({ 
-          message: `Row ${rowNumber}: Missing one or more options for question: "${row.question.substring(0, 30)}..."` 
+
+      try {
+        // Validate row data
+        const validation = validateQuestion(row);
+        if (!validation.isValid) {
+          throw new Error(validation.message);
+        }
+
+        // Get subject_id
+        const subjectId = subjectMap.get(row.subject.toLowerCase());
+        if (!subjectId) {
+          throw new Error(`Invalid subject: "${row.subject}"`);
+        }
+
+        // Insert question
+        await connection.query(`
+          INSERT INTO pyq_questions (
+            year,
+            subject_id,
+            question,
+            answer,
+            option1,
+            option2,
+            option3,
+            option4,
+            degree,
+            created_by,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        `, [
+          row.year,
+          subjectId,
+          row.question,
+          row.answer.toUpperCase(),
+          row.option1,
+          row.option2,
+          row.option3,
+          row.option4,
+          row.degree || null,
+          req.user.id
+        ]);
+
+        results.successful++;
+      } catch (error) {
+        results.failed++;
+        results.errors.push({
+          row: rowNumber,
+          question: row.question?.substring(0, 50),
+          error: error.message
         });
       }
-
-      // Get subject_id from subjects table using subject name
-      const [subjectResult] = await db.query('SELECT id FROM subjects WHERE name = ?', [row.subject]);
-      if (!subjectResult.length) {
-        return res.status(400).json({ 
-          message: `Row ${rowNumber}: Invalid subject: "${row.subject}" for question: "${row.question.substring(0, 30)}..."` 
-        });
-      }
-
-      const subject_id = subjectResult[0].id;
-
-      // Validate that answer is one of the options
-      const answer = row.answer.toString().toUpperCase();
-      if (!['A', 'B', 'C', 'D'].includes(answer)) {
-        return res.status(400).json({ 
-          message: `Row ${rowNumber}: Invalid answer format. Must be A, B, C, or D for question: "${row.question.substring(0, 30)}..."` 
-        });
-      }
-
-      // Insert the question into the database
-      await db.query(
-        'INSERT INTO pyq_questions (year, subject_id, question, answer, option1, option2, option3, option4, degree) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [row.year, subject_id, row.question, answer, row.option1, row.option2, row.option3, row.option4, row.degree || null]
-      );
     }
 
-    res.json({ message: `${data.length} questions uploaded successfully.` });
+    // Commit transaction if there were any successful inserts
+    if (results.successful > 0) {
+      await connection.commit();
+
+      // Clear related caches
+      await Promise.all([
+        cache.del('questions:all:*'),
+        cache.del('questions:filtered:*'),
+        cache.del('questions:years')
+      ]);
+
+      logger.info('Questions uploaded successfully', {
+        total: results.total,
+        successful: results.successful,
+        failed: results.failed,
+        uploadedBy: req.user.id
+      });
+    } else {
+      await connection.rollback();
+    }
+
+    res.json({
+      success: true,
+      message: `Processed ${results.total} questions: ${results.successful} successful, ${results.failed} failed`,
+      results
+    });
   } catch (error) {
-    console.error('Error updating questions:', error);
-    handleError(res, error, 'Error updating questions.');
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
   }
-};
+});
+
+// Get random questions for test with caching
+const getRandomQuestions = catchAsync(async (req, res) => {
+  const { subject_id, count = 10, difficulty, year } = req.query;
+  
+  let query = `
+    SELECT 
+      q.id,
+      q.question,
+      q.option1,
+      q.option2,
+      q.option3,
+      q.option4,
+      q.answer,
+      q.year,
+      q.degree,
+      s.name as subject_name,
+      s.code as subject_code,
+      s.id as subject_id
+    FROM pyq_questions q
+    JOIN subjects s ON q.subject_id = s.id
+    WHERE q.is_active = true
+  `;
+
+  const params = [];
+
+  if (subject_id) {
+    query += ' AND q.subject_id IN (?)';
+    params.push(subject_id.split(','));
+  }
+
+  if (difficulty) {
+    query += ' AND q.degree IN (?)';
+    params.push(difficulty.split(','));
+  }
+
+  if (year) {
+    query += ' AND q.year IN (?)';
+    params.push(year.split(','));
+  }
+  
+  query += ' ORDER BY RAND()';
+  
+  if (count) {
+    query += ' LIMIT ?';
+    params.push(parseInt(count));
+  }
+
+  const [questions] = await db.query(query, params);
+
+  if (!questions || questions.length === 0) {
+    throw new ApiError('No questions found', 404);
+  }
+
+  // Format questions for the test
+  const formattedQuestions = questions.map(q => ({
+    id: q.id,
+    question: q.question,
+    options: {
+      a: q.option1,
+      b: q.option2,
+      c: q.option3,
+      d: q.option4
+    },
+    subject: {
+      id: q.subject_id,
+      name: q.subject_name,
+      code: q.subject_code
+    },
+    difficulty: q.degree,
+    year: q.year
+  }));
+
+  res.json({
+    success: true,
+    count: formattedQuestions.length,
+    questions: formattedQuestions
+  });
+});
 
 // Export all functions
 module.exports = {
@@ -180,4 +526,5 @@ module.exports = {
   updateQuestion,
   deleteQuestion,
   updateQuestionsFromFile,
+  getRandomQuestions
 };

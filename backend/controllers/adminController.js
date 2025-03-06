@@ -1,7 +1,12 @@
-const db = require('../config/db');
-const createCsvStringifier = require('csv-writer').createObjectCsvStringifier;
-const asyncHandler = require('../utils/asyncHandler');
-const apiResponse = require('../utils/apiResponse');
+const db = require('../config/db').pool;
+const logger = require('../config/logger');
+const { ApiError } = require('../utils/errors');
+const { catchAsync } = require('../utils/errors');
+const { validateUser, validateReport } = require('../utils/validation');
+const cache = require('../config/cache');
+const bcrypt = require('bcryptjs');
+const { createObjectCsvStringifier } = require('csv-writer');
+const { generatePDF } = require('../utils/pdfGenerator');
 
 // Utility function for error handling
 const handleError = (error, message, statusCode = 500) => {
@@ -9,490 +14,901 @@ const handleError = (error, message, statusCode = 500) => {
   return { message, error: error.message, statusCode };
 };
 
-// Get Users (Admin only)
-exports.getUsers = asyncHandler(async (req, res) => {
-  try {
-    const [users] = await db.query(`
-      SELECT 
-        id, 
-        username, 
-        email, 
-        is_admin, 
-        created_at 
-      FROM users 
-      ORDER BY created_at DESC
-    `);
+// Get Users with pagination and caching
+const getUsers = catchAsync(async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 50;
+  const offset = (page - 1) * limit;
+  const search = req.query.search;
 
-    const processedUsers = users.map(user => ({
-      ...user,
-      is_admin: Boolean(user.is_admin)
-    }));
+  // Try cache first
+  const cacheKey = `admin:users:${page}:${limit}:${search || ''}`;
+  const cachedUsers = await cache.get(cacheKey);
 
-    return apiResponse.success(res, 'Users retrieved successfully', processedUsers);
-  } catch (error) {
-    return apiResponse.error(res, 'Failed to retrieve users', error);
-  }
-});
-
-// Analytics and Reports
-const getReportData = async (req, type) => {
-  const { range = 'month' } = req.query;
-  const now = new Date();
-  let startDate;
-
-  switch (range) {
-    case 'week':
-      startDate = new Date(now.setDate(now.getDate() - 7));
-      break;
-    case 'month':
-      startDate = new Date(now.setMonth(now.getMonth() - 1));
-      break;
-    case 'year':
-      startDate = new Date(now.setFullYear(now.getFullYear() - 1));
-      break;
-    default:
-      startDate = new Date(now.setMonth(now.getMonth() - 1));
+  if (cachedUsers) {
+    return res.json(JSON.parse(cachedUsers));
   }
 
-  let data;
-  if (type === 'performance') {
-    const [tests] = await db.query(
-      `SELECT 
-        DATE(created_at) as date,
-        AVG(score / total_questions * 100) as average_score,
-        COUNT(*) as test_count
-      FROM user_performance
-      WHERE created_at >= ?
-      GROUP BY DATE(created_at)
-      ORDER BY date`,
-      [startDate]
-    );
+  let query = `
+    SELECT 
+      u.id,
+      u.username,
+      u.email,
+      u.first_name,
+      u.last_name,
+      u.is_admin,
+      u.is_verified,
+      u.is_active,
+      u.created_at,
+      u.last_login,
+      COUNT(DISTINCT tr.id) as total_tests,
+      ROUND(AVG(tr.score), 2) as avg_score
+    FROM users u
+    LEFT JOIN test_results tr ON tr.user_id = u.id
+  `;
 
-    data = {
-      labels: tests.map(t => t.date),
-      averageScores: tests.map(t => Number(t.average_score).toFixed(2)),
-      testCounts: tests.map(t => t.test_count)
-    };
-  } else {
-    // Default to user statistics
-    const [newUsers] = await db.query(
-      `SELECT 
-        DATE(created_at) as date,
-        COUNT(*) as count
-      FROM users
-      WHERE created_at >= ?
-      GROUP BY DATE(created_at)
-      ORDER BY date`,
-      [startDate]
-    );
+  const params = [];
 
-    const [activeUsers] = await db.query(
-      `SELECT 
-        DATE(up.created_at) as date,
-        COUNT(DISTINCT up.username) as count
-      FROM user_performance up
-      WHERE up.created_at >= ?
-      GROUP BY DATE(up.created_at)
-      ORDER BY date`,
-      [startDate]
-    );
-
-    data = {
-      labels: newUsers.map(u => u.date),
-      newUsers: newUsers.map(u => u.count),
-      activeUsers: activeUsers.map(u => u.count)
-    };
+  if (search) {
+    query += ` WHERE (
+      u.username LIKE ? OR 
+      u.email LIKE ? OR 
+      u.first_name LIKE ? OR 
+      u.last_name LIKE ?
+    )`;
+    const searchTerm = `%${search}%`;
+    params.push(searchTerm, searchTerm, searchTerm, searchTerm);
   }
 
-  return data;
-};
+  query += ' GROUP BY u.id ORDER BY u.created_at DESC LIMIT ? OFFSET ?';
+  params.push(limit, offset);
 
-// Get Reports (Admin only)
-exports.getReports = asyncHandler(async (req, res) => {
-  try {
-    const { type = 'users' } = req.query;
-    const data = await getReportData(req, type);
-    
-    return apiResponse.success(res, 'Reports retrieved successfully', data);
-  } catch (error) {
-    return apiResponse.error(res, 'Failed to retrieve reports', error);
-  }
-});
+  // Get total count
+  const [countResult] = await db.query(
+    'SELECT COUNT(*) as total FROM users' + (search ? ' WHERE username LIKE ? OR email LIKE ? OR first_name LIKE ? OR last_name LIKE ?' : ''),
+    search ? [search, search, search, search] : []
+  );
 
-// Export Report (Admin only)
-exports.exportReport = asyncHandler(async (req, res) => {
-  try {
-    const { type = 'users', range = 'month', format = 'csv' } = req.query;
-    const data = await getReportData(req, type);
+  const [users] = await db.query(query, params);
 
-    // Handle different export formats
-    if (format === 'pdf') {
-      // For PDF, we'll send JSON that the frontend will convert to PDF
-      return apiResponse.success(res, 'Report data for PDF export', data);
-    } else {
-      // Default to CSV/Excel format
-      const csvStringifier = createCsvStringifier({
-        header: type === 'performance' 
-          ? [
-              { id: 'date', title: 'Date' },
-              { id: 'averageScore', title: 'Average Score' },
-              { id: 'testCount', title: 'Number of Tests' }
-            ]
-          : [
-              { id: 'date', title: 'Date' },
-              { id: 'newUsers', title: 'New Users' },
-              { id: 'activeUsers', title: 'Active Users' }
-            ]
-      });
-
-      const records = data.labels.map((date, index) => ({
-        date,
-        ...(type === 'performance' 
-          ? {
-              averageScore: data.averageScores[index],
-              testCount: data.testCounts[index]
-            }
-          : {
-              newUsers: data.newUsers[index],
-              activeUsers: data.activeUsers[index]
-            }
-        )
-      }));
-
-      const csvString = csvStringifier.stringifyRecords(records);
-      
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', `attachment; filename=${type}-report-${range}.csv`);
-      res.send(csvString);
-    }
-  } catch (error) {
-    return apiResponse.error(res, 'Failed to export report', error);
-  }
-});
-
-// Additional User Management Methods (Optional)
-exports.getUserById = asyncHandler(async (req, res) => {
-  try {
-    const { id } = req.params;
-    const [users] = await db.query(
-      `SELECT 
-        id, 
-        username, 
-        email, 
-        first_name,
-        last_name,
-        is_admin, 
-        created_at 
-      FROM users 
-      WHERE id = ?`,
-      [id]
-    );
-
-    if (!users || users.length === 0) {
-      return apiResponse.notFound(res, 'User not found');
-    }
-
-    return apiResponse.success(res, 'User retrieved successfully', users[0]);
-  } catch (error) {
-    return apiResponse.error(res, 'Failed to retrieve user', error);
-  }
-});
-
-exports.createUser = asyncHandler(async (req, res) => {
-  try {
-    const { username, email, password, first_name, last_name, is_admin } = req.body;
-
-    // Validate required fields
-    if (!username || !email || !password) {
-      return apiResponse.badRequest(res, 'Username, email, and password are required');
-    }
-
-    // Check if username or email already exists
-    const [existingUsers] = await db.query(
-      'SELECT id FROM users WHERE username = ? OR email = ?',
-      [username, email]
-    );
-
-    if (existingUsers.length > 0) {
-      return apiResponse.badRequest(res, 'Username or email already exists');
-    }
-
-    // Hash the password
-    const bcrypt = require('bcryptjs');
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    // Insert the new user
-    const [result] = await db.query(
-      `INSERT INTO users (
-        username, 
-        email, 
-        password, 
-        first_name, 
-        last_name, 
-        is_admin, 
-        is_verified
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [username, email, hashedPassword, first_name, last_name, is_admin ? 1 : 0, 1]
-    );
-
-    if (!result.insertId) {
-      return apiResponse.error(res, 'Failed to create user');
-    }
-
-    return apiResponse.success(res, 'User created successfully', { id: result.insertId });
-  } catch (error) {
-    console.error('Error creating user:', error);
-    return apiResponse.error(res, 'Failed to create user', error);
-  }
-});
-
-exports.updateUser = asyncHandler(async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { email, first_name, last_name, is_admin } = req.body;
-
-    // Validate required fields
-    if (!email) {
-      return apiResponse.badRequest(res, 'Email is required');
-    }
-
-    // Check if email already exists for another user
-    const [existingUsers] = await db.query(
-      'SELECT id FROM users WHERE email = ? AND id != ?',
-      [email, id]
-    );
-
-    if (existingUsers.length > 0) {
-      return apiResponse.badRequest(res, 'Email already exists for another user');
-    }
-
-    // Update the user
-    const [result] = await db.query(
-      `UPDATE users SET 
-        email = ?, 
-        first_name = ?, 
-        last_name = ?, 
-        is_admin = ? 
-      WHERE id = ?`,
-      [email, first_name, last_name, is_admin ? 1 : 0, id]
-    );
-
-    if (result.affectedRows === 0) {
-      return apiResponse.notFound(res, 'User not found');
-    }
-
-    return apiResponse.success(res, 'User updated successfully');
-  } catch (error) {
-    console.error('Error updating user:', error);
-    return apiResponse.error(res, 'Failed to update user', error);
-  }
-});
-
-exports.deleteUser = asyncHandler(async (req, res) => {
-  const connection = await db.getConnection();
-
-  try {
-    await connection.beginTransaction();
-
-    const { id } = req.params;
-    
-    // Get the username first (needed for foreign key references)
-    const [userRows] = await connection.query('SELECT username FROM users WHERE id = ?', [id]);
-    
-    if (userRows.length === 0) {
-      await connection.rollback();
-      return apiResponse.notFound(res, 'User not found');
-    }
-    
-    const username = userRows[0].username;
-
-    // Get performance IDs associated with this user
-    const [performanceRows] = await connection.query(
-      'SELECT id FROM user_performance WHERE username = ?', 
-      [username]
-    );
-    
-    // Delete user_responses records linked to user's performances
-    if (performanceRows.length > 0) {
-      const performanceIds = performanceRows.map(row => row.id);
-      await connection.query(
-        'DELETE FROM user_responses WHERE performance_id IN (?)', 
-        [performanceIds]
-      );
-    }
-    
-    // Delete user_performance records
-    await connection.query('DELETE FROM user_performance WHERE username = ?', [username]);
-    
-    // Finally delete the user
-    const [result] = await connection.query('DELETE FROM users WHERE id = ?', [id]);
-
-    if (result.affectedRows === 0) {
-      await connection.rollback();
-      return apiResponse.notFound(res, 'User not found');
-    }
-
-    await connection.commit();
-    return apiResponse.success(res, 'User deleted successfully');
-  } catch (error) {
-    console.error('Error deleting user:', error);
-    await connection.rollback();
-    return apiResponse.error(res, 'Failed to delete user', error);
-  } finally {
-    connection.release();
-  }
-});
-
-// Get Test Statistics (Admin only)
-exports.getTestStats = asyncHandler(async (req, res) => {
-  try {
-    // Get overall test statistics
-    const [overallStats] = await db.query(`
-      SELECT 
-        COUNT(*) as total_tests,
-        AVG(score) as average_score,
-        MAX(score) as highest_score,
-        SUM(total_questions) as total_questions_attempted,
-        AVG(time_taken) as average_time
-      FROM test_results
-    `);
-    
-    // Get subject-wise statistics
-    const [subjectStats] = await db.query(`
-      SELECT 
-        s.name as subject_name,
-        COUNT(tr.id) as tests_taken,
-        AVG(tr.score) as average_score
-      FROM test_results tr
-      JOIN subjects s ON tr.subject_id = s.id
-      GROUP BY tr.subject_id
-      ORDER BY average_score DESC
-    `);
-    
-    // Get user statistics - get total users from users table
-    const [totalUsersResult] = await db.query(`
-      SELECT COUNT(*) as total_users FROM users
-    `);
-    
-    // Get average tests per user
-    const [testUserStats] = await db.query(`
-      SELECT 
-        COUNT(DISTINCT user_id) as users_with_tests,
-        COUNT(*) / NULLIF(COUNT(DISTINCT user_id), 0) as avg_tests_per_user
-      FROM test_results
-    `);
-    
-    // Combine user statistics
-    const userStats = {
-      total_users: totalUsersResult[0].total_users,
-      users_with_tests: testUserStats[0].users_with_tests || 0,
-      avg_tests_per_user: testUserStats[0].avg_tests_per_user || 0
-    };
-    
-    return apiResponse.success(res, 'Test statistics retrieved successfully', {
-      overall: overallStats[0],
-      subjects: subjectStats,
-      users: userStats
-    });
-  } catch (error) {
-    return apiResponse.error(res, 'Failed to retrieve test statistics', error);
-  }
-});
-
-// Export Users (Admin only)
-exports.exportUsers = asyncHandler(async (req, res) => {
-  try {
-    const { format = 'csv' } = req.query;
-    
-    // Get users data
-    const [users] = await db.query(`
-      SELECT 
-        id, 
-        username, 
-        email, 
-        is_admin, 
-        created_at 
-      FROM users 
-      ORDER BY created_at DESC
-    `);
-
-    const processedUsers = users.map(user => ({
+  const result = {
+    success: true,
+    pagination: {
+      page,
+      limit,
+      total: countResult[0].total,
+      pages: Math.ceil(countResult[0].total / limit)
+    },
+    users: users.map(user => ({
       ...user,
       is_admin: Boolean(user.is_admin),
-      created_at: new Date(user.created_at).toLocaleDateString()
-    }));
+      is_verified: Boolean(user.is_verified),
+      is_active: Boolean(user.is_active)
+    }))
+  };
 
-    if (format === 'json') {
-      // For JSON format (used by frontend for PDF generation)
-      return apiResponse.success(res, 'Users data for export', processedUsers);
-    } else {
-      // Default to CSV format
-      const csvStringifier = createCsvStringifier({
-        header: [
-          { id: 'id', title: 'ID' },
-          { id: 'username', title: 'Username' },
-          { id: 'email', title: 'Email' },
-          { id: 'is_admin', title: 'Is Admin' },
-          { id: 'created_at', title: 'Created At' }
-        ]
-      });
+  // Cache for 5 minutes
+  await cache.set(cacheKey, JSON.stringify(result), 300);
 
-      const csvString = csvStringifier.stringifyRecords(processedUsers);
-      
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', 'attachment; filename=users.csv');
-      res.send(csvString);
-    }
-  } catch (error) {
-    return apiResponse.error(res, 'Failed to export users', error);
-  }
+  res.json(result);
 });
 
-// Export Test Statistics (Admin only)
-exports.exportTestStats = asyncHandler(async (req, res) => {
-  try {
-    const { format = 'csv' } = req.query;
-    
-    // Get subject-wise statistics
-    const [subjectStats] = await db.query(`
+// Get user by ID with caching
+const getUserById = catchAsync(async (req, res) => {
+  const { id } = req.params;
+
+  // Try cache first
+  const cacheKey = `admin:user:${id}`;
+  const cachedUser = await cache.get(cacheKey);
+
+  if (cachedUser) {
+    return res.json(JSON.parse(cachedUser));
+  }
+
+  const [users] = await db.query(`
+    SELECT 
+      u.*,
+      COUNT(DISTINCT tr.id) as total_tests,
+      ROUND(AVG(tr.score), 2) as avg_score,
+      MAX(tr.score) as highest_score,
+      SUM(tr.time_taken) as total_time,
+      (
+        SELECT COUNT(*)
+        FROM test_results
+        WHERE user_id = u.id
+        AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+      ) as recent_tests
+    FROM users u
+    LEFT JOIN test_results tr ON tr.user_id = u.id
+    WHERE u.id = ?
+    GROUP BY u.id
+  `, [id]);
+
+  if (!users[0]) {
+    throw new ApiError('User not found', 404);
+  }
+
+  const user = users[0];
+  delete user.password;
+
+  const result = {
+    success: true,
+    user: {
+      ...user,
+      is_admin: Boolean(user.is_admin),
+      is_verified: Boolean(user.is_verified),
+      is_active: Boolean(user.is_active)
+    }
+  };
+
+  // Cache for 5 minutes
+  await cache.set(cacheKey, JSON.stringify(result), 300);
+
+  res.json(result);
+});
+
+// Create user with validation
+const createUser = catchAsync(async (req, res) => {
+  const userData = req.body;
+
+  // Validate user data
+  const validation = validateUser(userData);
+  if (!validation.isValid) {
+    throw new ApiError(validation.message, 400);
+  }
+
+  // Check unique constraints
+  const [existing] = await db.query(
+    'SELECT id, username, email FROM users WHERE username = ? OR email = ?',
+    [userData.username, userData.email]
+  );
+
+  if (existing.length > 0) {
+    const existingUser = existing[0];
+    if (existingUser.email === userData.email) {
+      throw new ApiError('Email already exists', 400);
+    }
+    if (existingUser.username === userData.username) {
+      throw new ApiError('Username already exists', 400);
+    }
+  }
+
+  // Hash password
+  const salt = await bcrypt.genSalt(10);
+  const hashedPassword = await bcrypt.hash(userData.password, salt);
+
+  // Create user
+  const [result] = await db.query(`
+    INSERT INTO users (
+      username,
+      email,
+      password,
+      first_name,
+      last_name,
+      is_admin,
+      is_verified,
+      created_by,
+      created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+  `, [
+    userData.username.toLowerCase(),
+    userData.email.toLowerCase(),
+    hashedPassword,
+    userData.firstName,
+    userData.lastName,
+    Boolean(userData.isAdmin),
+    Boolean(userData.isVerified),
+    req.user.id
+  ]);
+
+  // Clear users cache
+  await cache.del('admin:users:*');
+
+  logger.info('User created successfully', {
+    userId: result.insertId,
+    createdBy: req.user.id
+  });
+
+  res.status(201).json({
+    success: true,
+    message: 'User created successfully',
+    userId: result.insertId
+  });
+});
+
+// Get analytics data with caching
+const getAnalytics = catchAsync(async (req, res) => {
+  const { range = '30d', type = 'all' } = req.query;
+
+  // Try cache first
+  const cacheKey = `admin:analytics:${range}:${type}`;
+  const cachedData = await cache.get(cacheKey);
+
+  if (cachedData) {
+    return res.json(JSON.parse(cachedData));
+  }
+
+  const rangeMap = {
+    '7d': 'INTERVAL 7 DAY',
+    '30d': 'INTERVAL 30 DAY',
+    '90d': 'INTERVAL 90 DAY',
+    '1y': 'INTERVAL 1 YEAR'
+  };
+
+  const timeRange = rangeMap[range] || 'INTERVAL 30 DAY';
+  const queries = [];
+
+  if (type === 'all' || type === 'users') {
+    queries.push(db.query(`
+      SELECT 
+        DATE(created_at) as date,
+        COUNT(*) as new_users,
+        COUNT(DISTINCT CASE WHEN last_login >= DATE_SUB(NOW(), ${timeRange}) THEN id END) as active_users
+      FROM users
+      WHERE created_at >= DATE_SUB(NOW(), ${timeRange})
+      GROUP BY DATE(created_at)
+      ORDER BY date
+    `));
+  }
+
+  if (type === 'all' || type === 'tests') {
+    queries.push(db.query(`
+      SELECT 
+        DATE(created_at) as date,
+        COUNT(*) as total_tests,
+        ROUND(AVG(score), 2) as avg_score,
+        COUNT(DISTINCT user_id) as unique_users
+      FROM test_results
+      WHERE created_at >= DATE_SUB(NOW(), ${timeRange})
+      GROUP BY DATE(created_at)
+      ORDER BY date
+    `));
+  }
+
+  if (type === 'all' || type === 'subjects') {
+    queries.push(db.query(`
       SELECT 
         s.name as subject_name,
-        COUNT(tr.id) as tests_taken,
-        AVG(tr.score) as average_score
-      FROM test_results tr
-      JOIN subjects s ON tr.subject_id = s.id
-      GROUP BY tr.subject_id
-      ORDER BY average_score DESC
-    `);
-
-    // Process data for export
-    const processedStats = subjectStats.map(subject => ({
-      subject_name: subject.subject_name,
-      tests_taken: subject.tests_taken,
-      average_score: `${subject.average_score.toFixed(1)}%`
-    }));
-
-    if (format === 'json') {
-      // For JSON format (used by frontend for PDF generation)
-      return apiResponse.success(res, 'Test statistics for export', processedStats);
-    } else {
-      // Default to CSV format
-      const csvStringifier = createCsvStringifier({
-        header: [
-          { id: 'subject_name', title: 'Subject' },
-          { id: 'tests_taken', title: 'Tests Taken' },
-          { id: 'average_score', title: 'Average Score' }
-        ]
-      });
-
-      const csvString = csvStringifier.stringifyRecords(processedStats);
-      
-      res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', 'attachment; filename=test-statistics.csv');
-      res.send(csvString);
-    }
-  } catch (error) {
-    return apiResponse.error(res, 'Failed to export test statistics', error);
+        COUNT(tr.id) as total_tests,
+        ROUND(AVG(tr.score), 2) as avg_score,
+        COUNT(DISTINCT tr.user_id) as unique_users
+      FROM subjects s
+      LEFT JOIN test_results tr ON tr.subject_id = s.id
+      WHERE tr.created_at >= DATE_SUB(NOW(), ${timeRange})
+      GROUP BY s.id
+      ORDER BY total_tests DESC
+    `));
   }
+
+  const results = await Promise.all(queries);
+  const analytics = {};
+
+  if (type === 'all' || type === 'users') {
+    analytics.users = results[0][0];
+  }
+
+  if (type === 'all' || type === 'tests') {
+    analytics.tests = results[type === 'all' ? 1 : 0][0];
+  }
+
+  if (type === 'all' || type === 'subjects') {
+    analytics.subjects = results[type === 'all' ? 2 : 0][0];
+  }
+
+  const result = {
+    success: true,
+    range,
+    analytics
+  };
+
+  // Cache for 5 minutes
+  await cache.set(cacheKey, JSON.stringify(result), 300);
+
+  res.json(result);
 });
+
+// Export report with validation
+const exportReport = catchAsync(async (req, res) => {
+  const { type = 'users', range = '30d', format = 'csv' } = req.query;
+
+  // Validate report parameters
+  const validation = validateReport({ type, range, format });
+  if (!validation.isValid) {
+    throw new ApiError(validation.message, 400);
+  }
+
+  // Get analytics data
+  const { analytics } = await getAnalytics(req, res);
+
+  if (format === 'csv') {
+    const csvStringifier = createObjectCsvStringifier({
+      header: getReportHeaders(type)
+    });
+
+    const records = formatReportData(type, analytics[type]);
+    const csvString = csvStringifier.stringifyRecords(records);
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=${type}-report-${range}.csv`);
+    return res.send(csvString);
+  }
+
+  if (format === 'pdf') {
+    const pdfBuffer = await generatePDF(type, analytics[type]);
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${type}-report-${range}.pdf`);
+    return res.send(pdfBuffer);
+  }
+
+  throw new ApiError('Unsupported format', 400);
+});
+
+// Helper functions for report generation
+const getReportHeaders = (type) => {
+  const headers = {
+    users: [
+      { id: 'date', title: 'Date' },
+      { id: 'newUsers', title: 'New Users' },
+      { id: 'activeUsers', title: 'Active Users' }
+    ],
+    tests: [
+      { id: 'date', title: 'Date' },
+      { id: 'totalTests', title: 'Total Tests' },
+      { id: 'avgScore', title: 'Average Score' },
+      { id: 'uniqueUsers', title: 'Unique Users' }
+    ],
+    subjects: [
+      { id: 'subject', title: 'Subject' },
+      { id: 'totalTests', title: 'Total Tests' },
+      { id: 'avgScore', title: 'Average Score' },
+      { id: 'uniqueUsers', title: 'Unique Users' }
+    ]
+  };
+
+  return headers[type] || headers.users;
+};
+
+const formatReportData = (type, data) => {
+  if (!data) return [];
+
+  switch (type) {
+    case 'users':
+      return data.map(d => ({
+        date: d.date,
+        newUsers: d.new_users,
+        activeUsers: d.active_users
+      }));
+    case 'tests':
+      return data.map(d => ({
+        date: d.date,
+        totalTests: d.total_tests,
+        avgScore: d.avg_score,
+        uniqueUsers: d.unique_users
+      }));
+    case 'subjects':
+      return data.map(d => ({
+        subject: d.subject_name,
+        totalTests: d.total_tests,
+        avgScore: d.avg_score,
+        uniqueUsers: d.unique_users
+      }));
+    default:
+      return [];
+  }
+};
+
+// Get dashboard overview with caching
+const getDashboardOverview = catchAsync(async (req, res) => {
+  const cacheKey = 'admin:dashboard:overview';
+  const cachedData = await cache.get(cacheKey);
+
+  if (cachedData) {
+    return res.json(JSON.parse(cachedData));
+  }
+
+  // Get user statistics
+  const [userStats] = await db.query(`
+    SELECT
+      COUNT(*) as total_users,
+      COUNT(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 END) as new_users_30d,
+      COUNT(CASE WHEN last_login >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 END) as active_users_7d,
+      COUNT(CASE WHEN is_verified = 1 THEN 1 END) as verified_users
+    FROM users
+  `);
+
+  // Get test statistics
+  const [testStats] = await db.query(`
+    SELECT
+      COUNT(*) as total_tests,
+      COUNT(DISTINCT user_id) as unique_test_takers,
+      ROUND(AVG(score), 2) as avg_score,
+      COUNT(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 END) as tests_30d
+    FROM test_results
+  `);
+
+  // Get subject statistics
+  const [subjectStats] = await db.query(`
+    SELECT
+      COUNT(*) as total_subjects,
+      SUM(
+        CASE WHEN EXISTS (
+          SELECT 1 FROM test_results tr 
+          WHERE tr.subject_id = s.id 
+          AND tr.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        ) THEN 1 ELSE 0 END
+      ) as active_subjects
+    FROM subjects s
+  `);
+
+  // Get question statistics
+  const [questionStats] = await db.query(`
+    SELECT
+      COUNT(*) as total_questions,
+      COUNT(CASE WHEN is_active = 1 THEN 1 END) as active_questions,
+      COUNT(DISTINCT subject_id) as subjects_with_questions
+    FROM questions
+  `);
+
+  // Get recent activity
+  const [recentActivity] = await db.query(`
+    SELECT
+      'test_completion' as activity_type,
+      u.username,
+      tr.score,
+      s.name as subject_name,
+      tr.created_at
+    FROM test_results tr
+    JOIN users u ON tr.user_id = u.id
+    LEFT JOIN subjects s ON tr.subject_id = s.id
+    WHERE tr.created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+    ORDER BY tr.created_at DESC
+    LIMIT 10
+  `);
+
+  const result = {
+    success: true,
+    dashboard: {
+      users: {
+        total: userStats[0].total_users,
+        newLast30Days: userStats[0].new_users_30d,
+        activeLast7Days: userStats[0].active_users_7d,
+        verifiedCount: userStats[0].verified_users
+      },
+      tests: {
+        total: testStats[0].total_tests,
+        uniqueTakers: testStats[0].unique_test_takers,
+        averageScore: testStats[0].avg_score,
+        last30Days: testStats[0].tests_30d
+      },
+      subjects: {
+        total: subjectStats[0].total_subjects,
+        active: subjectStats[0].active_subjects
+      },
+      questions: {
+        total: questionStats[0].total_questions,
+        active: questionStats[0].active_questions,
+        subjectsWithQuestions: questionStats[0].subjects_with_questions
+      },
+      recentActivity: recentActivity.map(activity => ({
+        type: activity.activity_type,
+        username: activity.username,
+        score: activity.score,
+        subjectName: activity.subject_name,
+        timestamp: activity.created_at
+      }))
+    }
+  };
+
+  // Cache for 5 minutes
+  await cache.set(cacheKey, JSON.stringify(result), 300);
+
+  res.json(result);
+});
+
+// Get performance analytics with caching
+const getPerformanceAnalytics = catchAsync(async (req, res) => {
+  const { range = '30d', groupBy = 'day' } = req.query;
+
+  const cacheKey = `admin:performance:${range}:${groupBy}`;
+  const cachedData = await cache.get(cacheKey);
+
+  if (cachedData) {
+    return res.json(JSON.parse(cachedData));
+  }
+
+  const rangeMap = {
+    '7d': 'INTERVAL 7 DAY',
+    '30d': 'INTERVAL 30 DAY',
+    '90d': 'INTERVAL 90 DAY',
+    '1y': 'INTERVAL 1 YEAR'
+  };
+
+  const groupByMap = {
+    day: 'DATE(tr.created_at)',
+    week: 'YEARWEEK(tr.created_at)',
+    month: 'DATE_FORMAT(tr.created_at, "%Y-%m")'
+  };
+
+  const timeRange = rangeMap[range] || 'INTERVAL 30 DAY';
+  const timeGroup = groupByMap[groupBy] || 'DATE(tr.created_at)';
+
+  // Get overall performance trend
+  const [performanceTrend] = await db.query(`
+    SELECT
+      ${timeGroup} as time_period,
+      COUNT(*) as total_tests,
+      COUNT(DISTINCT tr.user_id) as unique_users,
+      ROUND(AVG(tr.score), 2) as avg_score,
+      ROUND(MIN(tr.score), 2) as min_score,
+      ROUND(MAX(tr.score), 2) as max_score,
+      ROUND(AVG(tr.time_taken), 2) as avg_time
+    FROM test_results tr
+    WHERE tr.created_at >= DATE_SUB(NOW(), ${timeRange})
+    GROUP BY ${timeGroup}
+    ORDER BY time_period
+  `);
+
+  // Get subject-wise performance
+  const [subjectPerformance] = await db.query(`
+    SELECT
+      s.name as subject_name,
+      COUNT(tr.id) as total_tests,
+      COUNT(DISTINCT tr.user_id) as unique_users,
+      ROUND(AVG(tr.score), 2) as avg_score,
+      ROUND(MIN(tr.score), 2) as min_score,
+      ROUND(MAX(tr.score), 2) as max_score,
+      ROUND(AVG(tr.time_taken), 2) as avg_time
+    FROM subjects s
+    LEFT JOIN test_results tr ON tr.subject_id = s.id
+    WHERE tr.created_at >= DATE_SUB(NOW(), ${timeRange})
+    GROUP BY s.id
+    ORDER BY avg_score DESC
+  `);
+
+  // Get difficulty-wise performance
+  const [difficultyPerformance] = await db.query(`
+    SELECT
+      q.difficulty_level,
+      COUNT(tr.id) as total_tests,
+      COUNT(DISTINCT tr.user_id) as unique_users,
+      ROUND(AVG(tr.score), 2) as avg_score
+    FROM questions q
+    JOIN test_answers ta ON q.id = ta.question_id
+    JOIN test_results tr ON ta.test_id = tr.id
+    WHERE tr.created_at >= DATE_SUB(NOW(), ${timeRange})
+    GROUP BY q.difficulty_level
+    ORDER BY q.difficulty_level
+  `);
+
+  const result = {
+    success: true,
+    range,
+    groupBy,
+    performance: {
+      trend: performanceTrend.map(p => ({
+        period: p.time_period,
+        totalTests: p.total_tests,
+        uniqueUsers: p.unique_users,
+        avgScore: p.avg_score,
+        minScore: p.min_score,
+        maxScore: p.max_score,
+        avgTime: p.avg_time
+      })),
+      bySubject: subjectPerformance.map(s => ({
+        subject: s.subject_name,
+        totalTests: s.total_tests,
+        uniqueUsers: s.unique_users,
+        avgScore: s.avg_score,
+        minScore: s.min_score,
+        maxScore: s.max_score,
+        avgTime: s.avg_time
+      })),
+      byDifficulty: difficultyPerformance.map(d => ({
+        level: d.difficulty_level,
+        totalTests: d.total_tests,
+        uniqueUsers: d.unique_users,
+        avgScore: d.avg_score
+      }))
+    }
+  };
+
+  // Cache for 5 minutes
+  await cache.set(cacheKey, JSON.stringify(result), 300);
+
+  res.json(result);
+});
+
+// Get subject management data with caching
+const getSubjects = catchAsync(async (req, res) => {
+  const { active = true } = req.query;
+  
+  const cacheKey = `admin:subjects:${active}`;
+  const cachedData = await cache.get(cacheKey);
+
+  if (cachedData) {
+    return res.json(JSON.parse(cachedData));
+  }
+
+  const [subjects] = await db.query(`
+    SELECT
+      s.*,
+      COUNT(DISTINCT q.id) as question_count,
+      COUNT(DISTINCT tr.id) as test_count,
+      COUNT(DISTINCT tr.user_id) as unique_users,
+      ROUND(AVG(tr.score), 2) as avg_score
+    FROM subjects s
+    LEFT JOIN questions q ON q.subject_id = s.id AND q.is_active = true
+    LEFT JOIN test_results tr ON tr.subject_id = s.id
+    WHERE s.is_active = ?
+    GROUP BY s.id
+    ORDER BY s.name
+  `, [active]);
+
+  // Get topic distribution for each subject
+  const subjectsWithTopics = await Promise.all(
+    subjects.map(async subject => {
+      const [topics] = await db.query(`
+        SELECT
+          topic,
+          COUNT(*) as question_count
+        FROM questions
+        WHERE subject_id = ? AND is_active = true
+        GROUP BY topic
+        ORDER BY question_count DESC
+      `, [subject.id]);
+
+      return {
+        ...subject,
+        topics: topics.map(t => ({
+          name: t.topic,
+          questionCount: t.question_count
+        }))
+      };
+    })
+  );
+
+  const result = {
+    success: true,
+    subjects: subjectsWithTopics.map(subject => ({
+      id: subject.id,
+      name: subject.name,
+      code: subject.code,
+      description: subject.description,
+      isActive: Boolean(subject.is_active),
+      createdAt: subject.created_at,
+      stats: {
+        questionCount: subject.question_count,
+        testCount: subject.test_count,
+        uniqueUsers: subject.unique_users,
+        avgScore: subject.avg_score
+      },
+      topics: subject.topics
+    }))
+  };
+
+  // Cache for 5 minutes
+  await cache.set(cacheKey, JSON.stringify(result), 300);
+
+  res.json(result);
+});
+
+// Create or update subject
+const manageSubject = catchAsync(async (req, res) => {
+  const { id } = req.params;
+  const subjectData = req.body;
+
+  // Validate subject data
+  const validation = validateSubject(subjectData);
+  if (!validation.isValid) {
+    throw new ApiError(validation.message, 400);
+  }
+
+  let result;
+  if (id) {
+    // Update existing subject
+    [result] = await db.query(`
+      UPDATE subjects
+      SET
+        name = ?,
+        code = ?,
+        description = ?,
+        is_active = ?,
+        updated_at = CURRENT_TIMESTAMP,
+        updated_by = ?
+      WHERE id = ?
+    `, [
+      subjectData.name,
+      subjectData.code,
+      subjectData.description,
+      Boolean(subjectData.isActive),
+      req.user.id,
+      id
+    ]);
+
+    if (result.affectedRows === 0) {
+      throw new ApiError('Subject not found', 404);
+    }
+  } else {
+    // Create new subject
+    [result] = await db.query(`
+      INSERT INTO subjects (
+        name,
+        code,
+        description,
+        is_active,
+        created_by,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `, [
+      subjectData.name,
+      subjectData.code,
+      subjectData.description,
+      Boolean(subjectData.isActive),
+      req.user.id
+    ]);
+  }
+
+  // Clear subjects cache
+  await cache.del('admin:subjects:*');
+
+  logger.info(`Subject ${id ? 'updated' : 'created'} successfully`, {
+    subjectId: id || result.insertId,
+    updatedBy: req.user.id
+  });
+
+  res.status(id ? 200 : 201).json({
+    success: true,
+    message: `Subject ${id ? 'updated' : 'created'} successfully`,
+    subjectId: id || result.insertId
+  });
+});
+
+// Get test statistics
+const getTestStats = catchAsync(async (req, res) => {
+  const [testStats] = await db.query(`
+    SELECT
+      COUNT(*) as total_tests,
+      ROUND(AVG(score), 2) as avg_score,
+      COUNT(DISTINCT user_id) as unique_users,
+      COUNT(CASE WHEN score >= 70 THEN 1 END) as passing_tests,
+      ROUND(AVG(time_taken), 2) as avg_time
+    FROM test_results
+  `);
+
+  const [subjectStats] = await db.query(`
+    SELECT
+      s.name as subject_name,
+      COUNT(tr.id) as tests_taken,
+      ROUND(AVG(tr.score), 2) as average_score,
+      COUNT(CASE WHEN tr.score >= 70 THEN 1 END) / COUNT(*) * 100 as pass_rate,
+      ROUND(AVG(tr.time_taken), 2) as average_time
+    FROM subjects s
+    LEFT JOIN test_results tr ON tr.subject_id = s.id
+    GROUP BY s.id
+    ORDER BY tests_taken DESC
+  `);
+
+  res.json({
+    success: true,
+    data: {
+      overall: testStats[0],
+      subjects: subjectStats
+    }
+  });
+});
+
+// Get user statistics
+const getUserStats = catchAsync(async (req, res) => {
+  const [userStats] = await db.query(`
+    SELECT
+      COUNT(*) as total_users,
+      COUNT(CASE WHEN is_verified = 1 THEN 1 END) as verified_users,
+      COUNT(CASE WHEN is_active = 1 THEN 1 END) as active_users,
+      COUNT(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 END) as new_users_30d,
+      COUNT(CASE WHEN last_login >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 END) as active_users_7d
+    FROM users
+  `);
+
+  const [userActivity] = await db.query(`
+    SELECT
+      u.id,
+      u.username,
+      COUNT(tr.id) as tests_taken,
+      ROUND(AVG(tr.score), 2) as avg_score
+    FROM users u
+    LEFT JOIN test_results tr ON tr.user_id = u.id
+    GROUP BY u.id
+    ORDER BY tests_taken DESC
+    LIMIT 10
+  `);
+
+  res.json({
+    success: true,
+    data: {
+      stats: userStats[0],
+      topUsers: userActivity
+    }
+  });
+});
+
+// Get performance statistics
+const getPerformanceStats = catchAsync(async (req, res) => {
+  const [overallStats] = await db.query(`
+    SELECT
+      ROUND(AVG(score), 2) as avg_score,
+      ROUND(MIN(score), 2) as min_score,
+      ROUND(MAX(score), 2) as max_score,
+      ROUND(AVG(time_taken), 2) as avg_time,
+      COUNT(CASE WHEN score >= 70 THEN 1 END) / COUNT(*) * 100 as overall_pass_rate
+    FROM test_results
+  `);
+
+  const [trendStats] = await db.query(`
+    SELECT
+      DATE(created_at) as date,
+      COUNT(*) as total_tests,
+      ROUND(AVG(score), 2) as avg_score
+    FROM test_results
+    WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+    GROUP BY DATE(created_at)
+    ORDER BY date
+  `);
+
+  res.json({
+    success: true,
+    data: {
+      overall: overallStats[0],
+      trend: trendStats
+    }
+  });
+});
+
+// Get dashboard statistics
+const getDashboardStats = catchAsync(async (req, res) => {
+  const [overview] = await db.query(`
+    SELECT
+      (SELECT COUNT(*) FROM users) as total_users,
+      (SELECT COUNT(*) FROM test_results) as total_tests,
+      (SELECT ROUND(AVG(score), 2) FROM test_results) as avg_score,
+      (SELECT COUNT(*) FROM users WHERE last_login >= DATE_SUB(NOW(), INTERVAL 7 DAY)) as active_users
+  `);
+
+  const [recentTests] = await db.query(`
+    SELECT
+      tr.id,
+      u.username,
+      s.name as subject_name,
+      tr.score,
+      tr.created_at
+    FROM test_results tr
+    JOIN users u ON tr.user_id = u.id
+    LEFT JOIN subjects s ON tr.subject_id = s.id
+    ORDER BY tr.created_at DESC
+    LIMIT 5
+  `);
+
+  res.json({
+    success: true,
+    data: {
+      overview: overview[0],
+      recentTests
+    }
+  });
+});
+
+module.exports = {
+  getUsers,
+  getUserById,
+  createUser,
+  getAnalytics,
+  exportReport,
+  getDashboardOverview,
+  getPerformanceAnalytics,
+  getSubjects,
+  manageSubject,
+  getTestStats,
+  getUserStats,
+  getPerformanceStats,
+  getDashboardStats
+};

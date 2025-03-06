@@ -1,12 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import theme from './theme';
+import { lightTheme, darkTheme } from './theme';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { WebSocketProvider } from './contexts/WebSocketContext';
 
 // Layout Components
 import Navbar from './components/layout/Navbar';
 import ProtectedLayout from './components/layout/ProtectedLayout';
+import RealTimeNotifications from './components/common/RealTimeNotifications';
 
 // Auth Pages
 import SignIn from './components/auth/SignIn';
@@ -15,13 +18,9 @@ import VerifyEmail from './components/auth/VerifyEmail';
 
 // User Pages
 import UserDashboard from './components/pages/user/Dashboard';
-import MockDashboard from './components/pages/user/MockDashboard';
 import Performance from './components/pages/user/Performance';
-import MockPerformance from './components/pages/user/MockPerformance';
 import TestResult from './components/pages/user/TestResult';
-import MockTestResult from './components/pages/user/MockTestResult';
 import TestHistory from './components/pages/user/TestHistory';
-import MockTestHistory from './components/pages/user/MockTestHistory';
 import MCQTest from './components/pages/user/MCQTest';
 import Profile from './components/pages/user/Profile';
 import Settings from './components/pages/user/Settings';
@@ -36,27 +35,17 @@ import Syllabus from './components/pages/public/Syllabus';
 import About from './components/pages/public/About';
 import Contact from './components/pages/public/Contact';
 
-// Auth Provider
-import AuthProvider, { useAuth } from './hooks/useAuth';
-
-// Import test utilities for global access
-import './components/test';
-
 const AppRoutes = () => {
   const { isAuthenticated, isAdmin, loading } = useAuth();
 
-  const [username, setUsername] = useState('');
-  const [userId, setUserId] = useState('');
-  const [isAuthenticatedState, setIsAuthenticatedState] = useState(false);
-  const [isAdminState, setIsAdminState] = useState(false);
-
   if (loading) {
-    return null; // Or a loading spinner
+    return null;
   }
 
   return (
     <>
       <Navbar />
+      <RealTimeNotifications />
       <Routes>
         {/* Public Routes */}
         <Route path="/" element={<Home />} />
@@ -66,22 +55,21 @@ const AppRoutes = () => {
         
         {/* Auth Routes */}
         <Route path="/signin" element={
-          isAuthenticated ? <Navigate to={isAdmin ? "/admin/dashboard" : "/dashboard"} /> : 
-          <SignIn setIsAuthenticated={setIsAuthenticatedState} setUsername={setUsername} setIsAdmin={setIsAdminState} setUserId={setUserId} />
+          isAuthenticated ? <Navigate to={isAdmin ? "/admin/dashboard" : "/dashboard"} /> : <SignIn />
         } />
         <Route path="/signup" element={
           isAuthenticated ? <Navigate to={isAdmin ? "/admin/dashboard" : "/dashboard"} /> : <SignUp />
         } />
+        <Route path="/verify-email" element={<VerifyEmail />} />
         <Route path="/verify-email/:token" element={<VerifyEmail />} />
 
         {/* User Routes */}
         <Route element={<ProtectedLayout isAuthenticated={isAuthenticated} isAdmin={isAdmin} isLoading={loading} />}>
-          <Route path="/dashboard" element={<MockDashboard />} />
+          <Route path="/dashboard" element={<UserDashboard />} />
           <Route path="/test" element={<MCQTest />} />
-          <Route path="/performance" element={<MockPerformance />} />
+          <Route path="/performance" element={<Performance />} />
           <Route path="/test-result" element={<TestResult />} />
-          <Route path="/results/:resultId" element={<MockTestResult />} />
-          <Route path="/test-history" element={<MockTestHistory />} />
+          <Route path="/test-history" element={<TestHistory />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/settings" element={<Settings />} />
         </Route>
@@ -100,13 +88,28 @@ const AppRoutes = () => {
 };
 
 const App = () => {
+  const [darkMode, setDarkMode] = useState(() => {
+    const savedMode = localStorage.getItem('darkMode');
+    return savedMode ? JSON.parse(savedMode) : window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('darkMode', JSON.stringify(darkMode));
+  }, [darkMode]);
+
+  const toggleDarkMode = () => {
+    setDarkMode(!darkMode);
+  };
+
   return (
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
-    </ThemeProvider>
+    <AuthProvider>
+      <ThemeProvider theme={darkMode ? darkTheme : lightTheme}>
+        <CssBaseline />
+        <WebSocketProvider>
+          <AppRoutes />
+        </WebSocketProvider>
+      </ThemeProvider>
+    </AuthProvider>
   );
 };
 

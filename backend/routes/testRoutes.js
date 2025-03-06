@@ -2,6 +2,11 @@ const express = require('express');
 const testController = require('../controllers/testController');
 const { protect } = require('../middleware/authMiddleware');
 const asyncHandler = require('../utils/asyncHandler');
+const {
+  getTestHistory,
+  getTestStats,
+  getTestById
+} = require('../controllers/testHistoryController');
 
 const router = express.Router();
 
@@ -34,20 +39,20 @@ router.post('/submit', asyncHandler(testController.submitTest));
  * @desc    Get user's test history
  * @access  Private
  */
-router.get('/history', asyncHandler(testController.getTestHistory));
+router.get('/history', getTestHistory);
 
 /**
  * @route   GET /tests/stats
  * @desc    Get user's test statistics
  * @access  Private
  */
-router.get('/stats', asyncHandler(testController.getTestStats));
+router.get('/stats', getTestStats);
 
 /**
  * @route   GET /tests/:id
  * @desc    Get a specific test result by ID
  * @access  Private
  */
-router.get('/:id', asyncHandler(testController.getTestById));
+router.get('/:id', getTestById);
 
 module.exports = router;

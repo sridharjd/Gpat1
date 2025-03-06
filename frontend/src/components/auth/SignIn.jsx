@@ -15,13 +15,23 @@ import {
 import { Formik, Form } from 'formik';
 import * as Yup from 'yup';
 import { Visibility, VisibilityOff, LockOutlined, EmailOutlined } from '@mui/icons-material';
-import { useAuth } from '../../hooks/useAuth';
+import { useAuth } from '../../contexts/AuthContext';
+
+const validationSchema = Yup.object().shape({
+  email: Yup.string()
+    .email('Invalid email address')
+    .required('Email is required'),
+  password: Yup.string()
+    .required('Password is required')
+    .min(8, 'Password must be at least 8 characters'),
+});
 
 const SignIn = () => {
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
-  const { login, isAuthenticated, loading, error: authError, isAdmin } = useAuth();
+  const { login, isAuthenticated, error: authError, isAdmin } = useAuth();
 
   // Redirect if already authenticated
   useEffect(() => {
@@ -41,19 +51,22 @@ const SignIn = () => {
   const handleSubmit = async (values, { setSubmitting }) => {
     try {
       setError('');
+      setLoading(true);
       const result = await login(values);
-      
-      if (result && result.success) {
-        // Redirect admin users to admin dashboard, regular users to user dashboard
-        const redirectPath = result.user.isAdmin ? '/admin/dashboard' : '/dashboard';
-        window.location.href = redirectPath;
-      } else {
-        setError(result?.error || 'Failed to sign in. Please try again.');
+      if (result) {
+        navigate(result.isAdmin ? '/admin/dashboard' : '/dashboard');
       }
-    } catch (error) {
-      console.error('Sign-in error:', error);
-      setError('An unexpected error occurred. Please try again.');
+    } catch (err) {
+      console.error('Login error:', err);
+      if (err.message.includes('Invalid email or password')) {
+        setError('Invalid email or password');
+      } else if (err.message.includes('temporarily locked')) {
+        setError('Account is temporarily locked. Please try again later');
+      } else {
+        setError(err.message || 'An error occurred during login');
+      }
     } finally {
+      setLoading(false);
       setSubmitting(false);
     }
   };
@@ -74,15 +87,14 @@ const SignIn = () => {
 
   return (
     <Container component="main" maxWidth="xs">
-      <Paper 
-        elevation={6} 
-        sx={{ 
-          p: 4, 
-          mt: 8, 
-          display: 'flex', 
-          flexDirection: 'column', 
+      <Paper
+        sx={{
+          padding: 4,
+          display: 'flex',
+          flexDirection: 'column',
           alignItems: 'center',
-          borderRadius: 2
+          width: '100%',
+          boxShadow: 2,
         }}
       >
         <Typography component="h1" variant="h5" sx={{ mb: 3, fontWeight: 'bold' }}>
@@ -97,13 +109,7 @@ const SignIn = () => {
 
         <Formik
           initialValues={{ email: '', password: '' }}
-          validationSchema={Yup.object({
-            email: Yup.string()
-              .email('Invalid email address')
-              .required('Email is required'),
-            password: Yup.string()
-              .required('Password is required'),
-          })}
+          validationSchema={validationSchema}
           onSubmit={handleSubmit}
         >
           {({ values, handleChange, handleBlur, handleSubmit, errors, touched, isSubmitting }) => (

@@ -44,6 +44,59 @@ import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  LineChart,
+  Line,
+} from 'recharts';
+import { ErrorBoundary } from 'react-error-boundary';
+
+const RetryableComponent = ({ children, onRetry }) => {
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    setHasError(false);
+  }, [children]);
+
+  if (hasError) {
+    return (
+      <Box sx={{ textAlign: 'center', p: 3 }}>
+        <Typography color="error" gutterBottom>
+          Failed to load component
+        </Typography>
+        <Button onClick={() => {
+          setHasError(false);
+          onRetry?.();
+        }} variant="outlined">
+          Retry
+        </Button>
+      </Box>
+    );
+  }
+
+  return (
+    <ErrorBoundary
+      fallback={<Box sx={{ textAlign: 'center', p: 3 }}>
+        <Typography color="error" gutterBottom>
+          Something went wrong
+        </Typography>
+        <Button onClick={() => setHasError(true)} variant="outlined">
+          Retry
+        </Button>
+      </Box>}
+      onError={() => setHasError(true)}
+    >
+      {children}
+    </ErrorBoundary>
+  );
+};
 
 const AdminDashboard = () => {
   const [users, setUsers] = useState([]);
@@ -53,10 +106,10 @@ const AdminDashboard = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [stats, setStats] = useState({
-    totalUsers: 0,
-    activeUsers: 0,
-    totalTests: 0,
-    avgTestsPerUser: 0
+    tests: null,
+    users: null,
+    performance: null,
+    dashboard: null,
   });
   const [activeTab, setActiveTab] = useState(0);
   const [testStats, setTestStats] = useState({
@@ -160,37 +213,68 @@ const AdminDashboard = () => {
   };
 
   const exportTestStats = (format) => {
-    if (format === 'csv') {
-      // Use server-side CSV export
-      apiService.admin.exportTestStats('server');
-      handleExportClose();
-    } else if (format === 'excel') {
-      // Client-side Excel export
-      const subjectData = testStats.subjectDistribution.map(subject => ({
-        Subject: subject.name,
-        TestsTaken: subject.value,
-        AverageScore: `${subject.averageScore.toFixed(1)}%`
-      }));
-      exportToExcel(subjectData, 'Test_Statistics');
-    } else if (format === 'pdf') {
-      // Client-side PDF export
-      const subjectData = testStats.subjectDistribution.map(subject => ({
-        Subject: subject.name,
-        TestsTaken: subject.value,
-        AverageScore: `${subject.averageScore.toFixed(1)}%`
-      }));
-      
-      const columns = [
-        { key: 'Subject', header: 'Subject' },
-        { key: 'TestsTaken', header: 'Tests Taken' },
-        { key: 'AverageScore', header: 'Average Score' }
-      ];
-      
+    try {
+      if (format === 'csv') {
+        // Use server-side CSV export
+        apiService.admin.exportTestStats('server');
+        handleExportClose();
+      } else if (format === 'excel') {
+        // Client-side Excel export
+        const testData = testStats.subjectDistribution.map(subject => ({
+          Subject: subject.name,
+          TestsTaken: subject.value,
+          AverageScore: `${subject.averageScore.toFixed(1)}%`,
+          PassRate: `${subject.passRate || 0}%`,
+          AverageTime: subject.averageTime ? `${Math.round(subject.averageTime / 60)}m ${subject.averageTime % 60}s` : 'N/A'
+        }));
+        exportToExcel(testData, 'Test_Statistics');
+      } else if (format === 'pdf') {
+        // Client-side PDF export
+        const testData = testStats.subjectDistribution.map(subject => ({
+          Subject: subject.name,
+          TestsTaken: subject.value,
+          AverageScore: `${subject.averageScore.toFixed(1)}%`,
+          PassRate: `${subject.passRate || 0}%`,
+          AverageTime: subject.averageTime ? `${Math.round(subject.averageTime / 60)}m ${subject.averageTime % 60}s` : 'N/A'
+        }));
+        
+        const columns = [
+          { key: 'Subject', header: 'Subject' },
+          { key: 'TestsTaken', header: 'Tests Taken' },
+          { key: 'AverageScore', header: 'Average Score' },
+          { key: 'PassRate', header: 'Pass Rate' },
+          { key: 'AverageTime', header: 'Average Time' }
+        ];
+        
+        exportToPDF(testData, columns, 'Test_Statistics');
+      }
+    } catch (error) {
+      console.error('Error exporting test statistics:', error);
+      setError('Failed to export test statistics. Please try again.');
+    }
+  };
+
+  const fetchData = async (fetchFunction, errorMessage) => {
+    const MAX_RETRIES = 3;
+    const INITIAL_DELAY = 1000;
+    let retries = 0;
+    
+    while (retries < MAX_RETRIES) {
       try {
-        exportToPDF(subjectData, columns, 'Test_Statistics');
+        const response = await fetchFunction();
+        if (!response.data.success) {
+          throw new Error(response.data.message || errorMessage);
+        }
+        return response.data.data;
       } catch (error) {
-        console.error('Error generating PDF:', error);
-        setError('Failed to generate PDF. Please try another format.');
+        retries++;
+        if (retries === MAX_RETRIES) {
+          console.error(`${errorMessage}:`, error);
+          setError(errorMessage);
+          throw error;
+        }
+        // Exponential backoff
+        await new Promise(resolve => setTimeout(resolve, INITIAL_DELAY * Math.pow(2, retries - 1)));
       }
     }
   };
@@ -198,31 +282,28 @@ const AdminDashboard = () => {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const response = await apiService.admin.getUsers();
-      if (response.data && response.data.success && Array.isArray(response.data.data)) {
-        const usersData = response.data.data;
+      const data = await fetchData(
+        () => apiService.admin.getUsers(),
+        'Failed to fetch users'
+      );
+      
+      if (Array.isArray(data.data)) {
+        const usersData = data.data;
         setUsers(usersData);
         
-        // Calculate active users (if is_active property exists)
         const activeUsersCount = usersData.filter(user => user.is_active).length;
-        
         setStats(prev => ({
           ...prev,
-          totalUsers: usersData.length,
-          activeUsers: activeUsersCount
+          dashboard: {
+            ...prev.dashboard,
+            totalUsers: usersData.length,
+            activeUsers: activeUsersCount
+          }
         }));
-        
-        console.log('Users fetched successfully:', usersData);
-      } else {
-        setError('Invalid response format from server');
-        console.error('Invalid response format:', response.data);
-        // Initialize with empty array to prevent map errors
-        setUsers([]);
       }
     } catch (error) {
       setError('Error fetching users');
       console.error('Error fetching users:', error);
-      // Initialize with empty array to prevent map errors
       setUsers([]);
     } finally {
       setLoading(false);
@@ -256,10 +337,13 @@ const AdminDashboard = () => {
         
         setStats(prev => ({
           ...prev,
-          totalTests: overall.total_tests || 0,
-          // Only update totalUsers if there's actual test data, otherwise keep the value from fetchUsers
-          totalUsers: users.total_users > 0 ? users.total_users : prev.totalUsers,
-          avgTestsPerUser: users.avg_tests_per_user || 0
+          dashboard: {
+            ...prev.dashboard,
+            totalTests: overall.total_tests || 0,
+            // Only update totalUsers if there's actual test data, otherwise keep the value from fetchUsers
+            totalUsers: users.total_users > 0 ? users.total_users : prev.dashboard.totalUsers,
+            avgTestsPerUser: users.avg_tests_per_user || 0
+          }
         }));
       } else {
         console.error('Invalid test stats response:', response.data);
@@ -272,8 +356,32 @@ const AdminDashboard = () => {
   };
 
   useEffect(() => {
-    fetchUsers();
-    fetchTestStats();
+    const fetchStats = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const [testStats, userStats, performanceStats, dashboardStats] = await Promise.all([
+          apiService.admin.getTestStats(),
+          apiService.admin.getUserStats(),
+          apiService.admin.getPerformanceStats(),
+          apiService.admin.getDashboardStats(),
+        ]);
+
+        setStats({
+          tests: testStats.data,
+          users: userStats.data,
+          performance: performanceStats.data,
+          dashboard: dashboardStats.data,
+        });
+      } catch (err) {
+        console.error('Error fetching dashboard stats:', err);
+        setError(err.message || 'Failed to fetch dashboard statistics');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchStats();
   }, []);
 
   const handleTabChange = (event, newValue) => {
@@ -331,23 +439,32 @@ const AdminDashboard = () => {
 
   if (loading) {
     return (
-      <Container sx={{ mt: 10, display: 'flex', justifyContent: 'center' }}>
+      <Box
+        display="flex"
+        justifyContent="center"
+        alignItems="center"
+        minHeight="80vh"
+      >
         <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (error) {
+    return (
+      <Container>
+        <Alert severity="error" sx={{ mt: 2 }}>
+          {error}
+        </Alert>
       </Container>
     );
   }
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 10, mb: 4 }}>
+    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
       <Typography variant="h4" gutterBottom>
         Admin Dashboard
       </Typography>
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
 
       {success && (
         <Alert severity="success" sx={{ mb: 2 }}>
@@ -355,59 +472,75 @@ const AdminDashboard = () => {
         </Alert>
       )}
 
-      {/* Dashboard Stats */}
-      <Grid container spacing={3} sx={{ mb: 4 }}>
-        <Grid item xs={12} sm={3}>
-          <Card>
-            <CardContent>
-              <Box display="flex" alignItems="center">
-                <PersonIcon sx={{ fontSize: 40, color: 'primary.main', mr: 2 }} />
-                <Box>
-                  <Typography variant="h5">{stats.totalUsers}</Typography>
-                  <Typography variant="body2" color="textSecondary">Total Users</Typography>
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
+      {/* Summary Cards */}
+      <Grid container spacing={3}>
+        <Grid item xs={12} md={3}>
+          <Paper
+            sx={{
+              p: 2,
+              display: 'flex',
+              flexDirection: 'column',
+              height: 140,
+            }}
+          >
+            <Typography component="h2" variant="h6" color="primary" gutterBottom>
+              Total Users
+            </Typography>
+            <Typography component="p" variant="h4">
+              {stats.dashboard?.totalUsers || 0}
+            </Typography>
+          </Paper>
         </Grid>
-        <Grid item xs={12} sm={3}>
-          <Card>
-            <CardContent>
-              <Box display="flex" alignItems="center">
-                <SchoolIcon sx={{ fontSize: 40, color: 'success.main', mr: 2 }} />
-                <Box>
-                  <Typography variant="h5">{stats.activeUsers}</Typography>
-                  <Typography variant="body2" color="textSecondary">Active Users</Typography>
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
+        <Grid item xs={12} md={3}>
+          <Paper
+            sx={{
+              p: 2,
+              display: 'flex',
+              flexDirection: 'column',
+              height: 140,
+            }}
+          >
+            <Typography component="h2" variant="h6" color="primary" gutterBottom>
+              Tests Taken
+            </Typography>
+            <Typography component="p" variant="h4">
+              {stats.dashboard?.totalTests || 0}
+            </Typography>
+          </Paper>
         </Grid>
-        <Grid item xs={12} sm={3}>
-          <Card>
-            <CardContent>
-              <Box display="flex" alignItems="center">
-                <AssessmentIcon sx={{ fontSize: 40, color: 'warning.main', mr: 2 }} />
-                <Box>
-                  <Typography variant="h5">{stats.totalTests}</Typography>
-                  <Typography variant="body2" color="textSecondary">Total Tests Taken</Typography>
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
+        <Grid item xs={12} md={3}>
+          <Paper
+            sx={{
+              p: 2,
+              display: 'flex',
+              flexDirection: 'column',
+              height: 140,
+            }}
+          >
+            <Typography component="h2" variant="h6" color="primary" gutterBottom>
+              Average Score
+            </Typography>
+            <Typography component="p" variant="h4">
+              {stats.dashboard?.averageScore?.toFixed(1) || '0.0'}%
+            </Typography>
+          </Paper>
         </Grid>
-        <Grid item xs={12} sm={3}>
-          <Card>
-            <CardContent>
-              <Box display="flex" alignItems="center">
-                <BarChartIcon sx={{ fontSize: 40, color: 'info.main', mr: 2 }} />
-                <Box>
-                  <Typography variant="h5">{stats.avgTestsPerUser.toFixed(1)}</Typography>
-                  <Typography variant="body2" color="textSecondary">Avg Tests Per User</Typography>
-                </Box>
-              </Box>
-            </CardContent>
-          </Card>
+        <Grid item xs={12} md={3}>
+          <Paper
+            sx={{
+              p: 2,
+              display: 'flex',
+              flexDirection: 'column',
+              height: 140,
+            }}
+          >
+            <Typography component="h2" variant="h6" color="primary" gutterBottom>
+              Active Users
+            </Typography>
+            <Typography component="p" variant="h4">
+              {stats.dashboard?.activeUsers || 0}
+            </Typography>
+          </Paper>
         </Grid>
       </Grid>
 
@@ -498,100 +631,134 @@ const AdminDashboard = () => {
       )}
 
       {/* Test Statistics Tab */}
-      {activeTab === 1 && (
-        <Grid container spacing={3}>
-          <Grid item xs={12}>
-            <Paper sx={{ p: 2 }}>
-              <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-                <Typography variant="h6">Test Statistics</Typography>
-                <Button 
-                  variant="outlined" 
-                  color="primary" 
-                  startIcon={<FileDownloadIcon />}
-                  onClick={handleExportClick}
-                  disabled={testStats.loading || testStats.subjectDistribution.length === 0}
-                >
-                  Export
-                </Button>
-              </Box>
-              {testStats.loading ? (
-                <Box display="flex" justifyContent="center" p={3}>
-                  <CircularProgress />
+      <RetryableComponent onRetry={() => fetchTestStats()}>
+        {activeTab === 1 && (
+          <Grid container spacing={3}>
+            <Grid item xs={12}>
+              <Paper sx={{ p: 2 }}>
+                <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+                  <Typography variant="h6">Test Statistics</Typography>
+                  <Button 
+                    variant="outlined" 
+                    color="primary" 
+                    startIcon={<FileDownloadIcon />}
+                    onClick={handleExportClick}
+                    disabled={testStats.loading || testStats.subjectDistribution.length === 0}
+                  >
+                    Export
+                  </Button>
                 </Box>
-              ) : (
-                <Grid container spacing={3}>
-                  {/* Average Score Card */}
-                  <Grid item xs={12} md={4}>
-                    <Card>
-                      <CardContent>
-                        <Typography variant="h6" gutterBottom>Average Score</Typography>
-                        <Typography variant="h3" color="primary">
-                          {testStats.averageScore.toFixed(1)}%
-                        </Typography>
-                      </CardContent>
-                    </Card>
+                {testStats.loading ? (
+                  <Box display="flex" justifyContent="center" p={3}>
+                    <CircularProgress />
+                  </Box>
+                ) : (
+                  <Grid container spacing={3}>
+                    {/* Average Score Card */}
+                    <Grid item xs={12} md={4}>
+                      <Card>
+                        <CardContent>
+                          <Typography variant="h6" gutterBottom>Average Score</Typography>
+                          <Typography variant="h3" color="primary">
+                            {testStats.averageScore.toFixed(1)}%
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                    
+                    {/* Tests Per Day Chart */}
+                    <Grid item xs={12} md={8}>
+                      <Card>
+                        <CardContent>
+                          <Typography variant="h6" gutterBottom>Tests Taken (Last 7 Days)</Typography>
+                          {testStats.testsPerDay.length > 0 ? (
+                            <Box sx={{ height: 300 }}>
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={testStats.testsPerDay}>
+                                  <CartesianGrid strokeDasharray="3 3" />
+                                  <XAxis dataKey="date" />
+                                  <YAxis />
+                                  <Tooltip />
+                                  <Legend />
+                                  <Bar dataKey="count" name="Tests Taken" fill="#8884d8" />
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </Box>
+                          ) : (
+                            <Box sx={{ p: 3, textAlign: 'center' }}>
+                              <Typography color="textSecondary">No test data available</Typography>
+                            </Box>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                    
+                    {/* Subject Distribution */}
+                    <Grid item xs={12}>
+                      <Card>
+                        <CardContent>
+                          <Typography variant="h6" gutterBottom>Subject Distribution</Typography>
+                          {testStats.subjectDistribution.length > 0 ? (
+                            <Box>
+                              <TableContainer>
+                                <Table>
+                                  <TableHead>
+                                    <TableRow>
+                                      <TableCell>Subject</TableCell>
+                                      <TableCell align="right">Tests Taken</TableCell>
+                                      <TableCell align="right">Average Score</TableCell>
+                                      <TableCell align="right">Pass Rate</TableCell>
+                                      <TableCell align="right">Average Time</TableCell>
+                                    </TableRow>
+                                  </TableHead>
+                                  <TableBody>
+                                    {testStats.subjectDistribution.map((subject, index) => (
+                                      <TableRow key={index}>
+                                        <TableCell>{subject.name}</TableCell>
+                                        <TableCell align="right">{subject.value}</TableCell>
+                                        <TableCell align="right">{subject.averageScore.toFixed(1)}%</TableCell>
+                                        <TableCell align="right">{(subject.passRate || 0).toFixed(1)}%</TableCell>
+                                        <TableCell align="right">
+                                          {subject.averageTime 
+                                            ? `${Math.round(subject.averageTime / 60)}m ${subject.averageTime % 60}s`
+                                            : 'N/A'
+                                          }
+                                        </TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </TableContainer>
+                              <Box sx={{ height: 300, mt: 3 }}>
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <BarChart data={testStats.subjectDistribution}>
+                                    <CartesianGrid strokeDasharray="3 3" />
+                                    <XAxis dataKey="name" />
+                                    <YAxis yAxisId="left" orientation="left" stroke="#8884d8" />
+                                    <YAxis yAxisId="right" orientation="right" stroke="#82ca9d" />
+                                    <Tooltip />
+                                    <Legend />
+                                    <Bar yAxisId="left" dataKey="value" name="Tests Taken" fill="#8884d8" />
+                                    <Bar yAxisId="right" dataKey="averageScore" name="Average Score" fill="#82ca9d" />
+                                  </BarChart>
+                                </ResponsiveContainer>
+                              </Box>
+                            </Box>
+                          ) : (
+                            <Box sx={{ p: 3, textAlign: 'center' }}>
+                              <Typography color="textSecondary">No subject data available</Typography>
+                            </Box>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </Grid>
                   </Grid>
-                  
-                  {/* Tests Per Day */}
-                  <Grid item xs={12} md={8}>
-                    <Card>
-                      <CardContent>
-                        <Typography variant="h6" gutterBottom>Tests Taken (Last 7 Days)</Typography>
-                        {testStats.testsPerDay.length > 0 ? (
-                          <Box sx={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <Typography>
-                              Bar chart visualization would go here in a real implementation
-                            </Typography>
-                          </Box>
-                        ) : (
-                          <Box sx={{ p: 3, textAlign: 'center' }}>
-                            <Typography color="textSecondary">No test data available</Typography>
-                          </Box>
-                        )}
-                      </CardContent>
-                    </Card>
-                  </Grid>
-                  
-                  {/* Subject Distribution */}
-                  <Grid item xs={12}>
-                    <Card>
-                      <CardContent>
-                        <Typography variant="h6" gutterBottom>Subject Distribution</Typography>
-                        {testStats.subjectDistribution.length > 0 ? (
-                          <TableContainer>
-                            <Table>
-                              <TableHead>
-                                <TableRow>
-                                  <TableCell>Subject</TableCell>
-                                  <TableCell>Tests Taken</TableCell>
-                                  <TableCell>Average Score</TableCell>
-                                </TableRow>
-                              </TableHead>
-                              <TableBody>
-                                {testStats.subjectDistribution.map((subject, index) => (
-                                  <TableRow key={index}>
-                                    <TableCell>{subject.name}</TableCell>
-                                    <TableCell>{subject.value}</TableCell>
-                                    <TableCell>{subject.averageScore.toFixed(1)}%</TableCell>
-                                  </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
-                          </TableContainer>
-                        ) : (
-                          <Box sx={{ p: 3, textAlign: 'center' }}>
-                            <Typography color="textSecondary">No subject data available</Typography>
-                          </Box>
-                        )}
-                      </CardContent>
-                    </Card>
-                  </Grid>
-                </Grid>
-              )}
-            </Paper>
+                )}
+              </Paper>
+            </Grid>
           </Grid>
-        </Grid>
-      )}
+        )}
+      </RetryableComponent>
 
       {/* Export Menu */}
       <Menu

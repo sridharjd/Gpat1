@@ -1,75 +1,75 @@
 const jwt = require('jsonwebtoken');
-const db = require('../config/db');
+const { ApiError } = require('../utils/errors');
+const logger = require('../config/logger');
+const cache = require('../config/cache');
+const db = require('../config/db').pool;
 
 const protect = async (req, res, next) => {
   try {
-    let token = req.header('Authorization');
+    // Get token from header or cookie
+    const headerToken = req.header('Authorization')?.replace('Bearer ', '');
+    const cookieToken = req.cookies.refreshToken;
+    const token = headerToken || cookieToken;
 
     if (!token) {
-      console.error('No token provided');
-      return res.status(401).json({ message: 'No token, authorization denied' });
+      throw new ApiError('No authentication token provided', 401);
     }
 
-    // Remove Bearer prefix if present
-    token = token.replace('Bearer ', '');
+    // Try to get decoded token from cache
+    const cacheKey = `token:${token}`;
+    let decoded = await cache.get(cacheKey);
+    let user = null;
 
-    // Check if this is a development mock token
-    const isDevelopmentMockToken = process.env.NODE_ENV === 'development' && 
-                                  token.split('.').length === 3;
-    
-    let decoded;
-    
-    if (isDevelopmentMockToken) {
+    if (!decoded) {
+      // Verify token
       try {
-        // For development, try to decode the token without verification
-        const tokenParts = token.split('.');
-        const payloadBase64 = tokenParts[1];
-        // Base64 decode the payload
-        const payloadJson = Buffer.from(payloadBase64, 'base64').toString();
-        decoded = JSON.parse(payloadJson);
-        console.log('Development mode: Using mock token payload:', decoded);
+        decoded = jwt.verify(token, process.env.JWT_SECRET);
       } catch (error) {
-        console.error('Error decoding mock token:', error);
-        return res.status(401).json({ message: 'Invalid token format' });
-      }
-    } else {
-      // For production, verify the token signature
-      try {
-        const JWT_SECRET = process.env.JWT_SECRET;
-        if (!JWT_SECRET) {
-          console.error('JWT_SECRET is not set in environment variables');
-          return res.status(500).json({ message: 'Server configuration error' });
+        if (error.name === 'TokenExpiredError') {
+          throw new ApiError('Token has expired', 401);
         }
-        
-        decoded = jwt.verify(token, JWT_SECRET);
-      } catch (error) {
-        console.error('Token verification error:', error.message);
-        return res.status(401).json({ message: 'Token is invalid or expired' });
+        throw new ApiError('Invalid token', 401);
       }
-    }
-    
-    // Get user from database to ensure they still exist
-    try {
-      const [user] = await db.query(
-        'SELECT id, username, email, first_name, last_name, is_admin FROM users WHERE id = ?',
+
+      // Get user from database
+      const [users] = await db.query(
+        'SELECT * FROM users WHERE id = ? AND is_active = true',
         [decoded.id]
       );
 
-      if (!user.length) {
-        console.error('User not found in database');
-        return res.status(401).json({ message: 'User not found' });
+      user = users[0];
+      if (!user) {
+        throw new ApiError('User not found or inactive', 401);
       }
 
-      req.user = user[0];
-      next();
-    } catch (error) {
-      console.error('Database error:', error);
-      return res.status(500).json({ message: 'Server error' });
+      // Cache decoded token
+      await cache.set(cacheKey, decoded, 60 * 15); // Cache for 15 minutes
+    } else {
+      // Get user from database if we got decoded from cache
+      const [users] = await db.query(
+        'SELECT * FROM users WHERE id = ? AND is_active = true',
+        [decoded.id]
+      );
+
+      user = users[0];
+      if (!user) {
+        throw new ApiError('User not found or inactive', 401);
+      }
     }
+
+    // Attach user and admin status to request
+    req.user = {
+      ...user,
+      id: user.id,
+      isAdmin: Boolean(user.is_admin)
+    };
+
+    next();
   } catch (error) {
-    console.error('Auth middleware error:', error);
-    return res.status(500).json({ message: 'Server error' });
+    next(error);
   }
 };
 
-module.exports = { protect };
+module.exports = {
+  protect
+};

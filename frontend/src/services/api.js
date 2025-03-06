@@ -1,310 +1,223 @@
 import axios from 'axios';
 
-// Create API instance with base configuration
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const DEFAULT_TIMEOUT = 15000; // 15 seconds
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 1000; // 1 second
+
+// Cache for GET requests
+const cache = new Map();
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+// Create axios instance with default config
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5000',
+  baseURL: API_URL,
+  timeout: DEFAULT_TIMEOUT,
   headers: {
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
   },
-  timeout: 10000 // 10 seconds timeout
 });
 
-// Get the base URL for direct downloads
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+// Helper function for retrying failed requests
+const retryRequest = async (error, retryCount = 0) => {
+  const { config } = error;
+  
+  // Don't retry on client errors (4xx) or if max retries reached
+  if (!config || 
+      retryCount >= MAX_RETRIES || 
+      (error.response?.status >= 400 && error.response?.status < 500)) {
+    return Promise.reject(error);
+  }
 
-// Add a request interceptor
+  // Exponential backoff with jitter
+  const delay = Math.min(1000 * Math.pow(2, retryCount) + Math.random() * 1000, 10000);
+  await new Promise(resolve => setTimeout(resolve, delay));
+
+  console.log(`Retrying request (${retryCount + 1}/${MAX_RETRIES}):`, config.url);
+  return api.request(config);
+};
+
+// Add request interceptor to add auth token
 api.interceptors.request.use(
   (config) => {
-    // Get token from localStorage
     const token = localStorage.getItem('token');
-    
-    // If token exists, add to headers
     if (token) {
-      console.log('Token being sent:', token);
-      // Make sure we're sending the token exactly as the backend expects it
-      // The backend expects: Authorization: Bearer <token>
       config.headers.Authorization = `Bearer ${token}`;
+      console.log('Request headers:', config.headers);
+    } else {
+      console.warn('No token found in localStorage');
     }
-    
-    // Log outgoing requests in development
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`API Request: ${config.method.toUpperCase()} ${config.url}`);
-      if (token) {
-        console.log('Auth header:', config.headers.Authorization);
+
+    // Check cache for GET requests
+    if (config.method === 'get' && !config.skipCache) {
+      const cacheKey = `${config.url}${JSON.stringify(config.params || {})}`;
+      const cachedResponse = cache.get(cacheKey);
+      if (cachedResponse && Date.now() - cachedResponse.timestamp < CACHE_DURATION) {
+        return Promise.resolve(cachedResponse.data);
       }
     }
-    
+
     return config;
   },
   (error) => {
-    console.error('API Request Error:', error);
+    console.error('Request interceptor error:', error);
     return Promise.reject(error);
   }
 );
 
-// Add a response interceptor
+// Add response interceptor to handle errors and caching
 api.interceptors.response.use(
   (response) => {
-    // Log successful responses in development
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`API Response: ${response.status} ${response.config.url}`);
+    // Cache successful GET requests
+    if (response.config.method === 'get' && !response.config.skipCache) {
+      const cacheKey = `${response.config.url}${JSON.stringify(response.config.params || {})}`;
+      cache.set(cacheKey, {
+        data: response,
+        timestamp: Date.now()
+      });
     }
     return response;
   },
   async (error) => {
-    // Create a standardized error object
-    const errorResponse = {
+    // Handle network errors
+    if (!error.response) {
+      console.error('Network error:', error);
+      return Promise.reject({
+        status: 0,
+        message: 'Network error. Please check your connection.',
+        originalError: error,
+      });
+    }
+
+    // Handle timeout errors
+    if (error.code === 'ECONNABORTED') {
+      console.error('Request timeout:', error);
+      return Promise.reject({
+        status: 408,
+        message: 'Request timeout. Please try again.',
+        originalError: error,
+      });
+    }
+
+    // Handle rate limiting errors
+    if (error.response?.status === 429) {
+      const retryAfter = error.response.data?.retryAfter || 3600;
+      return Promise.reject({
+        status: 429,
+        message: error.response.data?.message || 'Too many requests. Please try again later.',
+        retryAfter,
+        originalError: error,
+      });
+    }
+
+    // Don't retry client errors (4xx)
+    if (error.response?.status >= 400 && error.response?.status < 500) {
+      return Promise.reject({
+        status: error.response.status,
+        message: error.response.data?.message || 'Request failed.',
+        data: error.response.data,
+        originalError: error,
+      });
+    }
+
+    // Retry server errors (5xx)
+    if (error.config && !error.config.retryCount) {
+      error.config.retryCount = 0;
+      return retryRequest(error, error.config.retryCount);
+    }
+
+    if (error.config && error.config.retryCount < MAX_RETRIES) {
+      error.config.retryCount++;
+      return retryRequest(error, error.config.retryCount);
+    }
+
+    // Format error response
+    return Promise.reject({
       status: error.response?.status || 500,
-      message: error.response?.data?.message || 'An unexpected error occurred',
-      data: error.response?.data || {},
-      originalError: error
-    };
-    
-    // Handle specific error cases
-    if (error.response) {
-      // Handle 400 Bad Request with more details
-      if (error.response.status === 400) {
-        if (error.response.data && error.response.data.message === 'Missing required fields') {
-          errorResponse.message = `Missing required fields: ${error.response.data.fields?.join(', ') || 'unknown fields'}`;
-        }
-      }
-      
-      // Handle 401 Unauthorized responses
-      if (error.response.status === 401) {
-        // Clear all auth data
-        localStorage.removeItem('token');
-        
-        // Dispatch an event that can be listened to by the auth context
-        window.dispatchEvent(new CustomEvent('auth:unauthorized', {
-          detail: { message: 'Your session has expired. Please sign in again.' }
-        }));
-        
-        // Redirect to signin page if not already there
-        if (!window.location.pathname.includes('/signin')) {
-          window.location.href = '/signin';
-        }
-      }
-      
-      // Handle 403 Forbidden responses
-      if (error.response.status === 403) {
-        if (error.response.data.needsVerification) {
-          window.location.href = '/verify-email';
-        }
-      }
-      
-      // Handle 429 Too Many Requests
-      if (error.response.status === 429) {
-        errorResponse.message = 'Too many requests. Please try again later.';
-      }
-    } else if (error.request) {
-      // The request was made but no response was received
-      errorResponse.message = 'No response from server. Please check your internet connection.';
-    }
-    
-    // Log error in development
-    if (process.env.NODE_ENV === 'development') {
-      console.error('API Error:', errorResponse);
-    }
-    
-    return Promise.reject(errorResponse);
+      message: error.response?.data?.message || 'An error occurred',
+      data: error.response?.data,
+      originalError: error,
+    });
   }
 );
 
-// API service methods
 const apiService = {
-  // Auth methods
+  // Helper to clear cache
+  clearCache: () => cache.clear(),
+  
+  // Helper to clear specific cache entry
+  clearCacheEntry: (url, params = {}) => {
+    const cacheKey = `${url}${JSON.stringify(params)}`;
+    cache.delete(cacheKey);
+  },
+
   auth: {
-    login: (credentials) => api.post('/auth/signin', credentials),
-    signIn: (credentials) => api.post('/auth/signin', credentials),
-    register: (userData) => api.post('/auth/signup', userData),
-    getCurrentUser: () => api.get('/auth/me'),
-    changePassword: (passwordData) => api.post('/auth/change-password', passwordData),
-    forgotPassword: (email) => api.post('/auth/forgot-password', email),
-    resetPassword: (resetData) => api.post('/auth/reset-password', resetData),
-    verifyEmail: (token) => api.post('/auth/verify-email', { token })
+    signIn: (credentials) => api.post('/api/auth/signin', credentials),
+    register: (userData) => api.post('/api/auth/signup', userData),
+    verifyEmail: (token) => api.get(`/api/auth/verify-email/${token}`),
+    resendVerification: (data) => api.post('/api/auth/resend-verification', data),
+    forgotPassword: (email) => api.post('/api/auth/forgot-password', { email }),
+    resetPassword: (resetData) => api.post('/api/auth/reset-password', resetData),
+    refreshToken: (refreshToken) => api.post('/api/auth/refresh-token', { refreshToken }),
+    getCurrentUser: () => api.get('/api/auth/me'),
+    signOut: () => api.post('/api/auth/signout'),
   },
-  
-  // Test methods
+
+  users: {
+    checkUsername: (username) => api.get(`/users/check-username/${username}`),
+    checkEmail: (email) => api.get(`/users/check-email/${email}`),
+    updateProfile: (userId, data) => api.put(`/users/${userId}/profile`, data),
+    updatePassword: (userId, data) => api.put(`/users/${userId}/password`, data),
+    getProfile: (userId) => api.get(`/users/${userId}/profile`),
+  },
+
   tests: {
-    getFilters: () => api.get('/tests/filters'),
-    getQuestions: (params) => api.get('/tests/questions', { params }),
-    submitTest: (testData) => {
-      // Ensure all required fields are present
-      const requiredFields = ['answers', 'test_id', 'subject_id', 'time_spent', 'total_questions'];
-      const missingFields = requiredFields.filter(field => 
-        testData[field] === undefined || testData[field] === null || 
-        (field !== 'time_spent' && testData[field] === 0)
-      );
-      
-      if (missingFields.length > 0) {
-        console.error('Missing required fields for test submission:', missingFields);
-        return Promise.reject({
-          status: 400,
-          message: `Missing required fields: ${missingFields.join(', ')}`
-        });
-      }
-      
-      console.log('Sending test data to server:', JSON.stringify(testData));
-      return api.post('/tests/submit', testData);
-    },
-    submitTestRaw: (payload) => api.post('/tests/submit', payload),
-    getHistory: (params) => api.get('/tests/history', { params }),
-    getById: (id) => api.get(`/tests/${id}`),
-    getStats: () => api.get('/tests/stats')
+    getHistory: () => api.get('/api/tests/history'),
+    getById: (id) => api.get(`/api/tests/history/${id}`),
+    submit: (testData) => api.post('/api/tests/submit', testData),
+    getStats: () => api.get('/api/tests/stats'),
   },
-  
-  // User methods
-  user: {
-    getProfile: () => api.get('/users/profile'),
-    updateProfile: (profileData) => api.put('/users/profile', profileData),
-    getPerformance: () => api.get('/dashboard/performance'),
-    getSettings: () => api.get('/users/settings')
+
+  questions: {
+    getTest: () => api.get('/api/questions/test'),
+    getById: (id) => api.get(`/api/questions/${id}`),
+    getBySubject: (subjectId) => api.get(`/api/questions/subject/${subjectId}`),
+    search: (query) => api.get('/api/questions/search', { params: query }),
   },
-  
-  // Dashboard methods
+
+  performance: {
+    get: (userId) => api.get(`/api/performance/${userId}`),
+    getHistory: (userId) => api.get(`/api/performance/${userId}/history`),
+    getBySubject: (userId, subjectId) => api.get(`/api/performance/${userId}/subject/${subjectId}`),
+    getAnalytics: (userId) => api.get(`/api/performance/${userId}/analytics`),
+  },
+
   dashboard: {
-    getPerformance: () => api.get('/dashboard/performance'),
-    getRecentTests: () => api.get('/dashboard/recent-tests'),
-    getSubjectPerformance: () => api.get('/dashboard/subject-performance')
+    getPerformance: () => api.get('/api/dashboard/performance'),
+    getRecentTests: () => api.get('/api/dashboard/recent-tests'),
+    getSubjectPerformance: () => api.get('/api/dashboard/subject-performance'),
+    getAnalytics: () => api.get('/api/dashboard/analytics'),
   },
-  
-  // Admin methods
+
   admin: {
-    getUsers: async () => {
-      try {
-        const response = await api.get('/admin/users');
-        return response;
-      } catch (error) {
-        console.error('Error fetching users:', error);
-        throw error;
-      }
-    },
-    
-    getReports: async (params) => {
-      try {
-        const response = await api.get('/admin/reports', { params });
-        return response;
-      } catch (error) {
-        console.error('Error fetching reports:', error);
-        throw error;
-      }
-    },
-
-    getUserById: async (id) => {
-      try {
-        const response = await api.get(`/admin/users/${id}`);
-        return response;
-      } catch (error) {
-        console.error('Error fetching user:', error);
-        throw error;
-      }
-    },
-
-    createUser: async (userData) => {
-      try {
-        const response = await api.post('/admin/users', userData);
-        return response;
-      } catch (error) {
-        console.error('Error creating user:', error);
-        throw error;
-      }
-    },
-
-    updateUser: async (id, userData) => {
-      try {
-        const response = await api.put(`/admin/users/${id}`, userData);
-        return response;
-      } catch (error) {
-        console.error('Error updating user:', error);
-        throw error;
-      }
-    },
-
-    deleteUser: async (id) => {
-      try {
-        const response = await api.delete(`/admin/users/${id}`);
-        return response;
-      } catch (error) {
-        console.error('Error deleting user:', error);
-        throw error;
-      }
-    },
-    
-    getTestStats: async () => {
-      try {
-        const response = await api.get('/admin/test-stats');
-        return response;
-      } catch (error) {
-        console.error('Error fetching test statistics:', error);
-        throw error;
-      }
-    },
-    
-    exportReport: async (type, format, range = 'month') => {
-      try {
-        // For direct download, we need to use a different approach
-        window.open(`${API_URL}/admin/reports/export?type=${type}&format=${format}&range=${range}`, '_blank');
-        return { success: true };
-      } catch (error) {
-        console.error('Error exporting report:', error);
-        throw error;
-      }
-    },
-    
-    exportUsers: async (format = 'csv') => {
-      try {
-        if (format === 'server') {
-          // For server-side export (CSV download)
-          window.open(`${API_URL}/admin/users/export`, '_blank');
-          return { success: true };
-        } else {
-          // For client-side export (JSON data for Excel/PDF)
-          const response = await api.get('/admin/users/export?format=json');
-          return response;
-        }
-      } catch (error) {
-        console.error('Error exporting users:', error);
-        throw error;
-      }
-    },
-    
-    exportTestStats: async (format = 'csv') => {
-      try {
-        if (format === 'server') {
-          // For server-side export (CSV download)
-          window.open(`${API_URL}/admin/test-stats/export`, '_blank');
-          return { success: true };
-        } else {
-          // For client-side export (JSON data for Excel/PDF)
-          const response = await api.get('/admin/test-stats/export?format=json');
-          return response;
-        }
-      } catch (error) {
-        console.error('Error exporting test statistics:', error);
-        throw error;
-      }
-    },
-    
-    uploadQuestions: async (formData) => {
-      try {
-        // Use different headers for FormData
-        const response = await api.post('/questions/update_questions', formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data'
-          }
-        });
-        return response;
-      } catch (error) {
-        console.error('Error uploading questions:', error);
-        throw error;
-      }
-    }
+    getUsers: (params) => api.get('/api/admin/users', { params }),
+    createUser: (userData) => api.post('/api/admin/users', userData),
+    updateUser: (userId, userData) => api.put(`/api/admin/users/${userId}`, userData),
+    deleteUser: (userId) => api.delete(`/api/admin/users/${userId}`),
+    getReports: (type = 'users') => api.get(`/api/admin/reports?type=${type}`),
+    exportReport: (type, format) => 
+      api.get(`/api/admin/reports/export?type=${type}&format=${format}`, { responseType: 'blob' }),
+    getTestStats: () => api.get('/api/admin/stats/tests'),
+    getUserStats: () => api.get('/api/admin/stats/users'),
+    getPerformanceStats: () => api.get('/api/admin/stats/performance'),
+    getDashboardStats: () => api.get('/api/admin/stats/dashboard'),
+    uploadQuestions: (data) => api.post('/api/admin/questions/upload', data, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60000, // 1 minute timeout for uploads
+    }),
+    deleteQuestions: (ids) => api.post('/api/admin/questions/delete', { ids }),
+    updateQuestions: (data) => api.put('/api/admin/questions/update', data),
   },
-  
-  // Contact methods
-  contact: {
-    submitForm: (formData) => api.post('/contact', formData)
-  }
 };
 
 export default apiService;

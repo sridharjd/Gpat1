@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   AppBar,
   Box,
@@ -11,6 +11,11 @@ import {
   Avatar,
   Divider,
   ListItemIcon,
+  Badge,
+  Tooltip,
+  useTheme,
+  useMediaQuery,
+  Fade
 } from '@mui/material';
 import {
   Menu as MenuIcon,
@@ -21,15 +26,29 @@ import {
   Assessment,
   QuestionAnswer,
   SupervisorAccount,
+  Notifications,
+  Home,
+  Book,
+  Info,
+  ContactSupport,
+  AccountCircle
 } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../../hooks/useAuth';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
+import { useWebSocket } from '../../contexts/WebSocketContext';
 
 const Navbar = () => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, isAdmin, logout, isAuthenticated } = useAuth();
+  const { isConnected } = useWebSocket();
+  
   const [anchorEl, setAnchorEl] = useState(null);
   const [mobileMenuAnchor, setMobileMenuAnchor] = useState(null);
+  const [notificationsAnchor, setNotificationsAnchor] = useState(null);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
 
   const handleProfileMenuOpen = (event) => {
     setAnchorEl(event.currentTarget);
@@ -39,81 +58,64 @@ const Navbar = () => {
     setMobileMenuAnchor(event.currentTarget);
   };
 
+  const handleNotificationsOpen = (event) => {
+    setNotificationsAnchor(event.currentTarget);
+    setUnreadNotifications(0);
+  };
+
   const handleMenuClose = () => {
     setAnchorEl(null);
     setMobileMenuAnchor(null);
+    setNotificationsAnchor(null);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     try {
-      // Close the menu first
       handleMenuClose();
-      
-      // Perform logout
-      logout();
-      
-      // Clear any stored authentication data
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      
-      // Navigate immediately to ensure the user is redirected
+      await logout();
       navigate('/signin');
-      console.log('User logged out successfully.');
-      
-      // Optional: Force a page refresh to clear any remaining state
-      window.location.reload();
     } catch (error) {
-      console.error('Error during logout:', error);
-      // Optionally, show a user-friendly error message
-      // You might want to use a toast or snackbar notification
+      console.error('Logout error:', error);
     }
   };
 
-  const handleNavigation = (path) => {
+  const handleNavigation = useCallback((path) => {
     try {
-      console.log(`Navigating to: ${path}`);
-      
-      // Check admin routes
       if (path.startsWith('/admin/') && !isAdmin) {
-        console.error('Unauthorized admin route access');
-        navigate('/signin');
+        console.warn('Unauthorized admin route access attempt');
         return;
       }
       
+      handleMenuClose();
       navigate(path);
     } catch (error) {
-      console.error(`Navigation error to ${path}:`, error);
-      // Optionally, show a user-friendly error message
+      console.error('Navigation error:', error);
     }
-  };
+  }, [navigate, isAdmin]);
 
   const publicPages = [
-    { title: 'Home', path: '/' },
-    { title: 'Syllabus', path: '/syllabus' },
-    { title: 'About', path: '/about' },
-    { title: 'Contact', path: '/contact' }
+    { title: 'Home', path: '/', icon: <Home /> },
+    { title: 'Syllabus', path: '/syllabus', icon: <Book /> },
+    { title: 'About', path: '/about', icon: <Info /> },
+    { title: 'Contact', path: '/contact', icon: <ContactSupport /> }
   ];
 
   const adminPages = [
-    { title: 'Dashboard', path: '/admin/dashboard' },
-    { title: 'Upload Questions', path: '/admin/upload-questions' }
+    { title: 'Dashboard', path: '/admin/dashboard', icon: <Dashboard /> },
+    { title: 'Upload Questions', path: '/admin/upload-questions', icon: <QuestionAnswer /> },
+    { title: 'Manage Users', path: '/admin/users', icon: <SupervisorAccount /> },
+    { title: 'Reports', path: '/admin/reports', icon: <Assessment /> }
   ];
 
   const userPages = [
-    { title: 'Dashboard', path: '/dashboard' },
-    { title: 'Take Test', path: '/test' },
-    { title: 'Performance', path: '/performance' },
+    { title: 'Dashboard', path: '/dashboard', icon: <Dashboard /> },
+    { title: 'Take Test', path: '/test', icon: <QuestionAnswer /> },
+    { title: 'Performance', path: '/performance', icon: <Assessment /> }
   ];
 
-  const menuItems = [
-    ...(isAdmin ? adminPages : userPages).map((item) => ({
-      label: item.title,
-      icon: item.title === 'Dashboard' ? <Dashboard /> : item.title === 'Take Test' ? <Assessment /> : item.title === 'Performance' ? <Assessment /> : item.title === 'Upload Questions' ? <QuestionAnswer /> : item.title === 'Manage Users' ? <SupervisorAccount /> : item.title === 'Reports' ? <Settings /> : null,
-      path: item.path,
-    })),
-  ];
+  const isCurrentPath = (path) => location.pathname === path;
 
-  const profileMenu = (
+  const renderMenu = (
     <Menu
       anchorEl={anchorEl}
       open={Boolean(anchorEl)}
@@ -121,14 +123,15 @@ const Navbar = () => {
       onClick={handleMenuClose}
       transformOrigin={{ horizontal: 'right', vertical: 'top' }}
       anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+      TransitionComponent={Fade}
     >
-      <MenuItem onClick={() => navigate('/profile')}>
+      <MenuItem onClick={() => handleNavigation('/profile')}>
         <ListItemIcon>
           <Person fontSize="small" />
         </ListItemIcon>
         Profile
       </MenuItem>
-      <MenuItem onClick={() => navigate('/settings')}>
+      <MenuItem onClick={() => handleNavigation('/settings')}>
         <ListItemIcon>
           <Settings fontSize="small" />
         </ListItemIcon>
@@ -144,91 +147,192 @@ const Navbar = () => {
     </Menu>
   );
 
-  const mobileMenu = (
+  const renderMobileMenu = (
     <Menu
       anchorEl={mobileMenuAnchor}
       open={Boolean(mobileMenuAnchor)}
       onClose={handleMenuClose}
       onClick={handleMenuClose}
+      TransitionComponent={Fade}
     >
-      {menuItems.map((item) => (
-        <MenuItem key={item.path} onClick={() => navigate(item.path)}>
-          <ListItemIcon>{item.icon}</ListItemIcon>
-          {item.label}
+      {publicPages.map((page) => (
+        <MenuItem 
+          key={page.path} 
+          onClick={() => handleNavigation(page.path)}
+          selected={isCurrentPath(page.path)}
+        >
+          <ListItemIcon>{page.icon}</ListItemIcon>
+          {page.title}
         </MenuItem>
       ))}
+      {isAuthenticated && (
+        <>
+          <Divider />
+          {(isAdmin ? adminPages : userPages).map((page) => (
+            <MenuItem 
+              key={page.path} 
+              onClick={() => handleNavigation(page.path)}
+              selected={isCurrentPath(page.path)}
+            >
+              <ListItemIcon>{page.icon}</ListItemIcon>
+              {page.title}
+            </MenuItem>
+          ))}
+          <Divider />
+          <MenuItem onClick={() => handleNavigation('/profile')}>
+            <ListItemIcon><AccountCircle /></ListItemIcon>
+            Profile
+          </MenuItem>
+          <MenuItem onClick={handleLogout}>
+            <ListItemIcon><ExitToApp /></ListItemIcon>
+            Logout
+          </MenuItem>
+        </>
+      )}
+    </Menu>
+  );
+
+  const renderNotificationsMenu = (
+    <Menu
+      anchorEl={notificationsAnchor}
+      open={Boolean(notificationsAnchor)}
+      onClose={handleMenuClose}
+      onClick={handleMenuClose}
+      transformOrigin={{ horizontal: 'right', vertical: 'top' }}
+      anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+      TransitionComponent={Fade}
+    >
+      <MenuItem disabled>No new notifications</MenuItem>
     </Menu>
   );
 
   return (
-    <AppBar position="fixed">
+    <AppBar 
+      position="fixed" 
+      sx={{ 
+        bgcolor: theme.palette.primary.main,
+        boxShadow: 3
+      }}
+    >
       <Toolbar>
-        <IconButton
-          size="large"
-          edge="start"
-          color="inherit"
-          aria-label="menu"
-          sx={{ mr: 2, display: { md: 'none' } }}
-          onClick={handleMobileMenuOpen}
-        >
-          <MenuIcon />
-        </IconButton>
+        {isMobile && (
+          <IconButton
+            size="large"
+            edge="start"
+            color="inherit"
+            aria-label="menu"
+            onClick={handleMobileMenuOpen}
+            sx={{ mr: 2 }}
+          >
+            <MenuIcon />
+          </IconButton>
+        )}
+
         <Typography
           variant="h6"
           noWrap
           component="div"
-          sx={{ flexGrow: { xs: 1, md: 0 }, mr: 2 }}
+          sx={{ 
+            flexGrow: { xs: 1, md: 0 }, 
+            mr: 2,
+            fontWeight: 'bold',
+            cursor: 'pointer'
+          }}
+          onClick={() => handleNavigation('/')}
         >
           GPAT Prep
         </Typography>
 
         <Box sx={{ flexGrow: 1, display: { xs: 'none', md: 'flex' } }}>
           {publicPages.map((page) => (
-            <Button
-              key={page.title}
-              onClick={() => handleNavigation(page.path)}
-              sx={{ color: 'white', display: 'block' }}
-            >
-              {page.title}
-            </Button>
-          ))}
-          {isAuthenticated && menuItems
-            .filter(item => !item.path.startsWith('/admin/') || isAdmin)
-            .map((item) => (
+            <Tooltip key={page.path} title={page.title}>
               <Button
-                key={item.label}
-                onClick={() => handleNavigation(item.path)}
-                sx={{ color: 'white', display: 'block' }}
+                onClick={() => handleNavigation(page.path)}
+                sx={{ 
+                  color: 'white',
+                  mx: 0.5,
+                  '&.Mui-selected': {
+                    bgcolor: 'rgba(255, 255, 255, 0.1)'
+                  }
+                }}
+                selected={isCurrentPath(page.path)}
+                startIcon={page.icon}
               >
-                {item.label}
+                {page.title}
               </Button>
-            ))
-          }
+            </Tooltip>
+          ))}
+          
+          {isAuthenticated && (isAdmin ? adminPages : userPages).map((page) => (
+            <Tooltip key={page.path} title={page.title}>
+              <Button
+                onClick={() => handleNavigation(page.path)}
+                sx={{ 
+                  color: 'white',
+                  mx: 0.5,
+                  '&.Mui-selected': {
+                    bgcolor: 'rgba(255, 255, 255, 0.1)'
+                  }
+                }}
+                selected={isCurrentPath(page.path)}
+                startIcon={page.icon}
+              >
+                {page.title}
+              </Button>
+            </Tooltip>
+          ))}
         </Box>
 
-        <Box sx={{ display: { xs: 'none', md: 'flex' } }}>
-          {isAuthenticated ? (
-            <IconButton
-              edge="end"
-              onClick={handleProfileMenuOpen}
-              color="inherit"
-            >
-              <Avatar sx={{ width: 32, height: 32 }}>
-                {user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || 'U'}
-              </Avatar>
-            </IconButton>
-          ) : (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {isAuthenticated && (
+            <>
+              <Tooltip title="Notifications">
+                <IconButton 
+                  color="inherit" 
+                  onClick={handleNotificationsOpen}
+                  sx={{ mr: 1 }}
+                >
+                  <Badge badgeContent={unreadNotifications} color="error">
+                    <Notifications />
+                  </Badge>
+                </IconButton>
+              </Tooltip>
+
+              <Tooltip title={user?.name || user?.email || 'Profile'}>
+                <IconButton
+                  edge="end"
+                  onClick={handleProfileMenuOpen}
+                  color="inherit"
+                >
+                  <Avatar 
+                    sx={{ 
+                      width: 32, 
+                      height: 32,
+                      bgcolor: isConnected ? 'success.main' : 'error.main'
+                    }}
+                  >
+                    {user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || 'U'}
+                  </Avatar>
+                </IconButton>
+              </Tooltip>
+            </>
+          )}
+
+          {!isAuthenticated && !isMobile && (
             <Button
               color="inherit"
               onClick={() => handleNavigation('/signin')}
+              startIcon={<AccountCircle />}
+              sx={{ fontWeight: 'bold' }}
             >
               Login
             </Button>
           )}
         </Box>
 
-        {isAuthenticated && profileMenu}
-        {mobileMenu}
+        {renderMenu}
+        {renderMobileMenu}
+        {renderNotificationsMenu}
       </Toolbar>
     </AppBar>
   );

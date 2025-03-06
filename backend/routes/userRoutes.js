@@ -1,25 +1,47 @@
 const express = require('express');
-const userController = require('../controllers/userController');
-const auth = require('../middleware/auth');
-
 const router = express.Router();
+const { protect } = require('../middleware/authMiddleware');
+const {
+  getProfile,
+  updateProfile,
+  getSettings,
+  updateSettings,
+  getTestHistory,
+  getTestById,
+  getAllUsers,
+  getUserById,
+  updateUser,
+  deleteUser,
+  getPerformanceStats,
+  getPerformanceHistory,
+  deleteAccount,
+  getTestPerformance
+} = require('../controllers/userController');
 
 // Profile routes
-router.get('/profile', auth, userController.getProfile);
-router.put('/profile', auth, userController.updateProfile);
+router.get('/profile', protect, getProfile);
+router.put('/profile', protect, updateProfile);
 
 // Settings routes
-router.get('/settings', auth, userController.getSettings);
-router.put('/settings', auth, userController.updateSettings);
+router.get('/settings', protect, getSettings);
+router.put('/settings', protect, updateSettings);
 
 // Test history routes
-router.get('/tests/history', auth, userController.getTestHistory);
-router.get('/tests/history/:id', auth, userController.getTestById);
+router.get('/tests/history', protect, getTestHistory);
+router.get('/tests/history/:id', protect, getTestById);
 
-// Existing routes
-router.get('/users', auth, userController.getAllUsers);
-router.get('/users/:id', auth, userController.getUserById);
-router.put('/users/:id', auth, userController.updateUser);
-router.delete('/users/:id', auth, userController.deleteUser);
+// User management routes
+router.get('/users', protect, getAllUsers);
+router.get('/users/:id', protect, getUserById);
+router.put('/users/:id', protect, updateUser);
+router.delete('/users/:id', protect, deleteUser);
+
+// Performance routes
+router.get('/performance/stats', protect, getPerformanceStats);
+router.get('/performance/history', protect, getPerformanceHistory);
+router.get('/performance/test/:testId', protect, getTestPerformance);
+
+// Account management
+router.delete('/account', protect, deleteAccount);
 
 module.exports = router;

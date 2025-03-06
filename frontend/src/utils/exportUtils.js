@@ -3,15 +3,218 @@ import 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 
+// Constants
+const DEFAULT_FILENAME = 'export';
+const MAX_ROWS_PER_SHEET = 1000000; // Excel 2007+ limit
+const CHUNK_SIZE = 1000; // Process 1000 rows at a time
+
 // Make sure jspdf-autotable is properly loaded
 if (typeof jsPDF.prototype.autoTable !== 'function') {
   console.error('jspdf-autotable is not properly loaded. PDF exports may not work correctly.');
 }
 
 /**
- * Export utilities for generating PDF and Excel exports
+ * Export utilities for generating PDF and Excel exports with progress tracking
  */
 const ExportUtils = {
+  /**
+   * Generate a filename with timestamp
+   * @param {String} prefix - Prefix for the filename
+   * @param {String} extension - File extension (pdf/xlsx/csv)
+   * @returns {String} Formatted filename
+   */
+  generateFilename: (prefix = DEFAULT_FILENAME, extension) => {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    return `${prefix}_${timestamp}.${extension}`;
+  },
+
+  /**
+   * Export data to PDF with progress tracking
+   * @param {Object} options - Export options
+   * @param {Array} options.data - Array of data objects to export
+   * @param {String} options.title - Title for the PDF
+   * @param {Array} options.columns - Column definitions
+   * @param {Function} options.onProgress - Progress callback
+   * @param {String} options.filename - Optional filename
+   * @returns {Promise<Blob>} PDF blob
+   */
+  exportToPDF: async ({
+    data,
+    title,
+    columns,
+    onProgress = () => {},
+    filename = DEFAULT_FILENAME
+  }) => {
+    try {
+      const doc = new jsPDF();
+      
+      // Add title
+      doc.setFontSize(18);
+      doc.text(title, 14, 22);
+      
+      // Add metadata
+      doc.setFontSize(11);
+      doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30);
+      doc.text(`Total Records: ${data.length}`, 14, 36);
+
+      // Process data in chunks to avoid memory issues
+      const chunks = [];
+      for (let i = 0; i < data.length; i += CHUNK_SIZE) {
+        chunks.push(data.slice(i, i + CHUNK_SIZE));
+      }
+
+      let currentRow = 0;
+      for (const chunk of chunks) {
+        // Create table rows for this chunk
+        const rows = chunk.map(item => columns.map(col => item[col.key]));
+        
+        // Add table
+        doc.autoTable({
+          startY: currentRow === 0 ? 44 : undefined,
+          head: [columns.map(col => col.header)],
+          body: rows,
+          didDrawPage: () => {
+            // Add page numbers
+            const pageCount = doc.internal.getNumberOfPages();
+            doc.setFontSize(10);
+            for (let i = 1; i <= pageCount; i++) {
+              doc.setPage(i);
+              doc.text(
+                `Page ${i} of ${pageCount}`,
+                doc.internal.pageSize.width - 20,
+                doc.internal.pageSize.height - 10
+              );
+            }
+          }
+        });
+
+        currentRow += chunk.length;
+        onProgress((currentRow / data.length) * 100);
+      }
+
+      const pdfBlob = doc.output('blob');
+      saveAs(pdfBlob, this.generateFilename(filename, 'pdf'));
+      return pdfBlob;
+    } catch (error) {
+      console.error('PDF export failed:', error);
+      throw new Error('Failed to generate PDF export. Please try again.');
+    }
+  },
+
+  /**
+   * Export data to Excel with progress tracking
+   * @param {Object} options - Export options
+   * @param {Array} options.data - Array of data objects to export
+   * @param {String} options.sheetName - Name for the worksheet
+   * @param {Array} options.columns - Column definitions
+   * @param {Function} options.onProgress - Progress callback
+   * @param {String} options.filename - Optional filename
+   * @returns {Promise<Blob>} Excel blob
+   */
+  exportToExcel: async ({
+    data,
+    sheetName = 'Sheet1',
+    columns,
+    onProgress = () => {},
+    filename = DEFAULT_FILENAME
+  }) => {
+    try {
+      // Create workbook
+      const wb = XLSX.utils.book_new();
+      
+      // Process data in chunks
+      const chunks = [];
+      for (let i = 0; i < data.length; i += CHUNK_SIZE) {
+        chunks.push(data.slice(i, i + CHUNK_SIZE));
+      }
+
+      let currentRow = 0;
+      let currentSheet = 1;
+      let currentSheetData = [columns.map(col => col.header)];
+
+      for (const chunk of chunks) {
+        // Process each row in the chunk
+        for (const item of chunk) {
+          const row = columns.map(col => item[col.key]);
+          currentSheetData.push(row);
+          currentRow++;
+
+          // Create new sheet if we hit the limit
+          if (currentSheetData.length >= MAX_ROWS_PER_SHEET) {
+            const ws = XLSX.utils.aoa_to_sheet(currentSheetData);
+            XLSX.utils.book_append_sheet(wb, ws, `${sheetName}${currentSheet}`);
+            currentSheetData = [columns.map(col => col.header)];
+            currentSheet++;
+          }
+
+          onProgress((currentRow / data.length) * 100);
+        }
+      }
+
+      // Add remaining data as final sheet
+      if (currentSheetData.length > 1) {
+        const ws = XLSX.utils.aoa_to_sheet(currentSheetData);
+        XLSX.utils.book_append_sheet(wb, ws, `${sheetName}${currentSheet}`);
+      }
+
+      // Generate Excel file
+      const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      saveAs(blob, this.generateFilename(filename, 'xlsx'));
+      return blob;
+    } catch (error) {
+      console.error('Excel export failed:', error);
+      throw new Error('Failed to generate Excel export. Please try again.');
+    }
+  },
+
+  /**
+   * Export data to CSV with progress tracking
+   * @param {Object} options - Export options
+   * @param {Array} options.data - Array of data objects to export
+   * @param {Array} options.columns - Column definitions
+   * @param {Function} options.onProgress - Progress callback
+   * @param {String} options.filename - Optional filename
+   * @returns {Promise<Blob>} CSV blob
+   */
+  exportToCSV: async ({
+    data,
+    columns,
+    onProgress = () => {},
+    filename = DEFAULT_FILENAME
+  }) => {
+    try {
+      const chunks = [];
+      for (let i = 0; i < data.length; i += CHUNK_SIZE) {
+        chunks.push(data.slice(i, i + CHUNK_SIZE));
+      }
+
+      // Start with headers
+      let csvContent = columns.map(col => `"${col.header}"`).join(',') + '\n';
+      let currentRow = 0;
+
+      // Process each chunk
+      for (const chunk of chunks) {
+        for (const item of chunk) {
+          const row = columns.map(col => {
+            const value = item[col.key];
+            return `"${value !== undefined ? value : ''}"`;
+          }).join(',');
+          csvContent += row + '\n';
+          currentRow++;
+          onProgress((currentRow / data.length) * 100);
+        }
+      }
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      saveAs(blob, this.generateFilename(filename, 'csv'));
+      return blob;
+    } catch (error) {
+      console.error('CSV export failed:', error);
+      throw new Error('Failed to generate CSV export. Please try again.');
+    }
+  },
+
   /**
    * Export test history to PDF
    * @param {Array} tests - Array of test objects

@@ -4,80 +4,84 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const mongoSanitize = require('express-mongo-sanitize');
 const xss = require('xss-clean');
+const http = require('http');
+const cookieParser = require('cookie-parser');
 const asyncHandler = require('./utils/asyncHandler');
 const apiResponse = require('./utils/apiResponse');
+const setupWebSocket = require('./websocket');
 
 // Routes
 const authRoutes = require('./routes/authRoutes');
-const subjectRoutes = require('./routes/subjectRoutes');
 const questionRoutes = require('./routes/questionRoutes');
 const testRoutes = require('./routes/testRoutes');
 const userRoutes = require('./routes/userRoutes');
-const dashboardRoutes = require('./routes/dashboardRoutes');
-const performanceRoutes = require('./routes/performanceRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 
 const db = require('./config/db');
 
+// Initialize Express app and HTTP server
 const app = express();
+const server = http.createServer(app);
+
+// Setup WebSocket server
+const io = setupWebSocket(server);
 
 // Security Middleware
-app.use(helmet()); // Set security HTTP headers
+app.use(helmet());
 app.use(cors({
-  origin: [
-    'http://localhost:3000', 
-    'http://localhost:3001', 
-    process.env.FRONTEND_URL || 'http://localhost:4000'
+  origin: process.env.CORS_ORIGIN?.split(',') || [
+    'http://localhost:3000',
+    'http://localhost:3001'
   ],
   credentials: true
 }));
 
+// Cookie Parser
+app.use(cookieParser());
+
 // Rate limiting
 const limiter = rateLimit({
-  max: 100, // limit each IP to 100 requests per windowMs
-  windowMs: 60 * 60 * 1000, // 1 hour
-  message: 'Too many requests from this IP, please try again in an hour!'
+  max: parseInt(process.env.RATE_LIMIT_MAX || '100', 10),
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10), // 15 minutes default
+  message: 'Too many requests from this IP, please try again later!'
 });
-app.use(limiter);
 
-// Body parser
-app.use(express.json({ limit: '10kb' })); // Body limit is 10kb
+// Registration specific rate limit
+const registrationLimiter = rateLimit({
+  max: 5, // 5 attempts
+  windowMs: 60 * 60 * 1000, // 1 hour
+  message: {
+    success: false,
+    message: 'Too many registration attempts. Please try again in an hour.',
+    retryAfter: 3600 // 1 hour in seconds
+  },
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      message: 'Too many registration attempts. Please try again in an hour.',
+      retryAfter: 3600 // 1 hour in seconds
+    });
+  }
+});
 
-// Data sanitization against NoSQL query injection
+app.use('/api', limiter);
+app.use('/api/auth/signup', registrationLimiter);
+
+// Body parser with size limit from env
+app.use(express.json({ 
+  limit: process.env.UPLOAD_LIMIT || '10kb' 
+}));
+
+// Data sanitization
 app.use(mongoSanitize());
-
-// Data sanitization against XSS
 app.use(xss());
 
-// Routes without /api prefix
-app.use('/auth', authRoutes);
-app.use('/subjects', subjectRoutes);
-app.use('/questions', questionRoutes);
-app.use('/tests', testRoutes);
-app.use('/users', userRoutes);
-app.use('/dashboard', dashboardRoutes);
-app.use('/performance', performanceRoutes);
-app.use('/admin', adminRoutes);
-
-// Handle user performance updates
-app.post('/updatePerformance', asyncHandler(async (req, res) => {
-  const { userId, performanceMetric } = req.body;
-  
-  try {
-    const [result] = await db.query(
-      'UPDATE user_performance SET performance_metric = ? WHERE user_id = ?', 
-      [performanceMetric, userId]
-    );
-
-    if (result.affectedRows === 0) {
-      return apiResponse.notFound(res, 'User performance not found');
-    }
-
-    return apiResponse.success(res, 'Performance updated successfully');
-  } catch (error) {
-    return apiResponse.error(res, 'Error updating performance', error);
-  }
-}));
+// API Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/tests', testRoutes);
+app.use('/api/questions', questionRoutes);
+app.use('/api/users', userRoutes);
 
 // Handle undefined routes
 app.all('*', (req, res) => {
@@ -86,24 +90,21 @@ app.all('*', (req, res) => {
 
 // Global error handling middleware
 app.use((err, req, res, next) => {
-  console.error(err.stack);
-  
-  // Handle specific error types
-  if (err.name === 'ValidationError') {
-    return apiResponse.error(res, 'Validation Error', err.errors || err.message, 400);
-  }
-  
-  if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
-    return apiResponse.error(res, 'Invalid or expired token', null, 401);
-  }
-  
-  // Default error response
-  return apiResponse.error(
-    res, 
-    err.message || 'Server Error', 
-    process.env.NODE_ENV === 'development' ? err.stack : undefined,
-    err.statusCode || 500
-  );
+  console.error('Error:', {
+    message: err.message,
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+  });
+
+  const statusCode = err.statusCode || 500;
+  const status = err.status || 'error';
+
+  return apiResponse.error(res, {
+    statusCode,
+    status,
+    message: err.message || 'Internal server error',
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+  });
 });
 
-module.exports = app;
+// Export both app and server
+module.exports = { app, server };

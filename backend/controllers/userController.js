@@ -1,312 +1,518 @@
-const db = require('../config/db');
-const User = require('../models/User');
-const UserPerformance = require('../models/userperformance');
+const db = require('../config/db').pool;
+const logger = require('../config/logger');
+const { validateUsername, validateEmail, validatePhone, sanitizeUser } = require('../utils/validation');
+const { ApiError } = require('../utils/errors');
+const { catchAsync } = require('../utils/errors');
+const User = require('../models/user');
+const UserPerformance = require('../models/UserPerformance');
+const asyncHandler = require('../utils/asyncHandler');
 
 const handleError = (res, error, message, statusCode = 500) => {
   console.error(message, error);
   res.status(statusCode).json({ message, error: error.message });
 };
 
-// Existing User Management Functions
-const getAllUsers = async (req, res) => {
-  try {
-    const [users] = await db.query('SELECT id, username, email, is_admin, created_at FROM users');
-    res.json(users);
-  } catch (err) {
-    console.error('Error fetching all users:', err);
-    handleError(res, err, 'Failed to fetch all users', 500);
-  }
-};
+// Get all users (admin only)
+const getAllUsers = catchAsync(async (req, res) => {
+  const users = await User.find().select('-password');
+  res.json({ success: true, data: users });
+});
 
-const getUserById = async (req, res) => {
-  try {
-    const [user] = await db.query(
-      'SELECT id, username, email, is_admin, created_at FROM users WHERE id = ?',
-      [req.params.id]
-    );
-    
-    if (!user[0]) {
-      console.error(`User with ID ${req.params.id} not found`);
-      return res.status(404).json({ message: 'User not found' });
+// Get user by ID (admin or self)
+const getUserById = catchAsync(async (req, res) => {
+  const userId = req.params.id;
+  
+  // Check authorization
+  if (!req.user.isAdmin && req.user.id !== parseInt(userId)) {
+    throw new ApiError('Not authorized to access this user', 403);
+  }
+
+  const [users] = await db.query(`
+    SELECT 
+      u.*,
+      COUNT(DISTINCT tr.id) as total_tests,
+      ROUND(AVG(tr.score), 2) as avg_score,
+      MAX(tr.score) as highest_score
+    FROM users u
+    LEFT JOIN test_results tr ON tr.user_id = u.id
+    WHERE u.id = ? AND u.is_active = true
+    GROUP BY u.id
+  `, [userId]);
+
+  if (!users[0]) {
+    throw new ApiError('User not found', 404);
+  }
+
+  res.json({
+    success: true,
+    user: sanitizeUser(users[0])
+  });
+});
+
+// Update user (admin or self)
+const updateUser = catchAsync(async (req, res) => {
+  const userId = req.params.id;
+  const { username, email, firstName, lastName, phoneNumber, bio } = req.body;
+
+  // Check authorization
+  if (!req.user.isAdmin && req.user.id !== parseInt(userId)) {
+    throw new ApiError('Not authorized to update this user', 403);
+  }
+
+  // Validate inputs
+  if (username) {
+    const usernameValidation = validateUsername(username);
+    if (!usernameValidation.isValid) {
+      throw new ApiError(usernameValidation.message, 400);
     }
-    
-    res.json(user[0]);
-  } catch (err) {
-    console.error(`Error fetching user with ID ${req.params.id}:`, err);
-    handleError(res, err, 'Failed to fetch user', 500);
-  }
-};
 
-const updateUser = async (req, res) => {
-  try {
-    const { username, email, isAdmin } = req.body;
-    
-    await db.query(
-      'UPDATE users SET username = COALESCE(?, username), email = COALESCE(?, email), is_admin = COALESCE(?, is_admin) WHERE id = ?',
-      [username, email, isAdmin, req.params.id]
+    // Check username uniqueness
+    const [existingUsers] = await db.query(
+      'SELECT id FROM users WHERE username = ? AND id != ?',
+      [username.toLowerCase(), userId]
     );
-    
-    const [updatedUser] = await db.query(
-      'SELECT id, username, email, is_admin, created_at FROM users WHERE id = ?',
-      [req.params.id]
-    );
-    
-    if (!updatedUser[0]) {
-      console.error(`User with ID ${req.params.id} not found after update`);
-      return res.status(404).json({ message: 'User not found' });
+    if (existingUsers.length > 0) {
+      throw new ApiError('Username is already taken', 400);
     }
-    
-    res.json(updatedUser[0]);
-  } catch (err) {
-    console.error(`Error updating user with ID ${req.params.id}:`, err);
-    handleError(res, err, 'Failed to update user', 500);
   }
-};
 
-const deleteUser = async (req, res) => {
-  try {
-    const [result] = await db.query('DELETE FROM users WHERE id = ?', [req.params.id]);
-    
-    if (result.affectedRows === 0) {
-      console.error(`User with ID ${req.params.id} not found`);
-      return res.status(404).json({ message: 'User not found' });
+  if (email) {
+    const emailValidation = validateEmail(email);
+    if (!emailValidation.isValid) {
+      throw new ApiError(emailValidation.message, 400);
     }
-    
-    res.json({ message: 'User deleted successfully' });
-  } catch (err) {
-    console.error(`Error deleting user with ID ${req.params.id}:`, err);
-    handleError(res, err, 'Failed to delete user', 500);
-  }
-};
 
-// Profile Management
-const getProfile = async (req, res) => {
-  try {
-    const [user] = await db.query(
-      'SELECT id, username, email, phone_number, bio, created_at FROM users WHERE id = ?',
-      [req.user.id]
+    // Check email uniqueness
+    const [existingUsers] = await db.query(
+      'SELECT id FROM users WHERE email = ? AND id != ?',
+      [email.toLowerCase(), userId]
     );
-    
-    if (!user[0]) {
-      console.error(`User with ID ${req.user.id} not found`);
-      return res.status(404).json({ message: 'User not found' });
+    if (existingUsers.length > 0) {
+      throw new ApiError('Email is already registered', 400);
     }
-    
-    res.json(user[0]);
-  } catch (err) {
-    console.error(`Error fetching profile for user with ID ${req.user.id}:`, err);
-    handleError(res, err, 'Failed to fetch profile', 500);
   }
-};
 
-const updateProfile = async (req, res) => {
-  try {
-    const { username, phoneNumber, bio } = req.body;
-    
-    await db.query(
-      'UPDATE users SET username = COALESCE(?, username), phone_number = COALESCE(?, phone_number), bio = COALESCE(?, bio) WHERE id = ?',
-      [username, phoneNumber, bio, req.user.id]
-    );
-    
-    const [updatedUser] = await db.query(
-      'SELECT id, username, email, phone_number, bio, created_at FROM users WHERE id = ?',
-      [req.user.id]
-    );
-    
-    res.json(updatedUser[0]);
-  } catch (err) {
-    console.error(`Error updating profile for user with ID ${req.user.id}:`, err);
-    handleError(res, err, 'Failed to update profile', 500);
-  }
-};
-
-// Test History Management
-const getTestHistory = async (req, res) => {
-  try {
-    const [tests] = await db.query(
-      `SELECT up.id, up.score, up.total_questions, up.created_at as completed_at,
-       CONCAT('Test ', DATE_FORMAT(up.created_at, '%Y-%m-%d')) as test_name
-       FROM user_performance up
-       WHERE up.username = (SELECT username FROM users WHERE id = ?)
-       ORDER BY up.created_at DESC`,
-      [req.user.id]
-    );
-    
-    const formattedTests = tests.map(test => ({
-      ...test,
-      duration: 30, // Default duration if not stored
-      score: (test.score / test.total_questions) * 100 // Convert to percentage
-    }));
-    
-    res.json(formattedTests);
-  } catch (err) {
-    console.error(`Error fetching test history for user with ID ${req.user.id}:`, err);
-    handleError(res, err, 'Failed to fetch test history', 500);
-  }
-};
-
-const getTestById = async (req, res) => {
-  try {
-    const [test] = await db.query(
-      `SELECT up.*, 
-       CONCAT('Test ', DATE_FORMAT(up.created_at, '%Y-%m-%d')) as test_name
-       FROM user_performance up
-       WHERE up.id = ? AND up.username = (SELECT username FROM users WHERE id = ?)`,
-      [req.params.id, req.user.id]
-    );
-    
-    if (!test[0]) {
-      console.error(`Test with ID ${req.params.id} not found`);
-      return res.status(404).json({ message: 'Test not found' });
+  if (phoneNumber) {
+    const phoneValidation = validatePhone(phoneNumber);
+    if (!phoneValidation.isValid) {
+      throw new ApiError(phoneValidation.message, 400);
     }
-    
-    const formattedTest = {
-      ...test[0],
-      duration: 30, // Default duration if not stored
-      score: (test[0].score / test[0].total_questions) * 100 // Convert to percentage
-    };
-    
-    res.json(formattedTest);
-  } catch (err) {
-    console.error(`Error fetching test with ID ${req.params.id}:`, err);
-    handleError(res, err, 'Failed to fetch test', 500);
   }
-};
 
-// Settings Management
-const getSettings = async (req, res) => {
-  try {
-    const [settings] = await db.query(
-      'SELECT email_notifications, dark_mode, show_progress, auto_save_answers FROM user_settings WHERE user_id = ?',
-      [req.user.id]
-    );
-    
-    // If no settings exist, return defaults
-    if (!settings[0]) {
-      return res.json({
-        emailNotifications: true,
-        darkMode: false,
-        showProgress: true,
-        autoSaveAnswers: true
-      });
+  // Update user
+  await db.query(`
+    UPDATE users 
+    SET 
+      username = COALESCE(?, username),
+      email = COALESCE(?, email),
+      first_name = COALESCE(?, first_name),
+      last_name = COALESCE(?, last_name),
+      phone_number = COALESCE(?, phone_number),
+      bio = COALESCE(?, bio),
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND is_active = true
+  `, [
+    username?.toLowerCase(),
+    email?.toLowerCase(),
+    firstName,
+    lastName,
+    phoneNumber,
+    bio,
+    userId
+  ]);
+
+  // Get updated user
+  const [users] = await db.query(
+    'SELECT * FROM users WHERE id = ? AND is_active = true',
+    [userId]
+  );
+
+  if (!users[0]) {
+    throw new ApiError('User not found', 404);
+  }
+
+  logger.info('User updated successfully', {
+    userId,
+    updatedBy: req.user.id
+  });
+
+  res.json({
+    success: true,
+    user: sanitizeUser(users[0])
+  });
+});
+
+// Soft delete user (admin only)
+const deleteUser = catchAsync(async (req, res) => {
+  const userId = req.params.id;
+
+  // Prevent deleting self
+  if (req.user.id === parseInt(userId)) {
+    throw new ApiError('Cannot delete your own account', 400);
+  }
+
+  // Soft delete user
+  const [result] = await db.query(`
+    UPDATE users 
+    SET 
+      is_active = false,
+      deactivated_at = CURRENT_TIMESTAMP,
+      deactivated_by = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND is_active = true
+  `, [req.user.id, userId]);
+
+  if (result.affectedRows === 0) {
+    throw new ApiError('User not found', 404);
+  }
+
+  logger.info('User deleted successfully', {
+    userId,
+    deletedBy: req.user.id
+  });
+
+  res.json({
+    success: true,
+    message: 'User deleted successfully'
+  });
+});
+
+// Get user profile
+const getProfile = catchAsync(async (req, res) => {
+  const user = await User.findById(req.user.id).select('-password');
+  if (!user) {
+    throw new ApiError('User not found', 404);
+  }
+  res.json({ success: true, data: user });
+});
+
+// Update user profile
+const updateProfile = catchAsync(async (req, res) => {
+  const { name, email } = req.body;
+  const user = await User.findById(req.user.id);
+
+  if (!user) {
+    throw new ApiError('User not found', 404);
+  }
+
+  if (email && email !== user.email) {
+    const emailExists = await User.findOne({ email });
+    if (emailExists) {
+      throw new ApiError('Email already in use', 400);
     }
-    
-    // Convert snake_case to camelCase
-    res.json({
+  }
+
+  user.name = name || user.name;
+  user.email = email || user.email;
+
+  const updatedUser = await user.save();
+  res.json({
+    success: true,
+    data: {
+      _id: updatedUser._id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      role: updatedUser.role
+    }
+  });
+});
+
+// Get user test history
+const getTestHistory = catchAsync(async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const offset = (page - 1) * limit;
+
+  // Get total count
+  const [countResult] = await db.query(
+    'SELECT COUNT(*) as total FROM test_results WHERE user_id = ?',
+    [req.user.id]
+  );
+  const total = countResult[0].total;
+
+  // Get paginated results
+  const [tests] = await db.query(`
+    SELECT 
+      tr.*,
+      t.title as test_name,
+      t.description,
+      t.total_questions,
+      t.duration
+    FROM test_results tr
+    JOIN tests t ON t.id = tr.test_id
+    WHERE tr.user_id = ?
+    ORDER BY tr.created_at DESC
+    LIMIT ? OFFSET ?
+  `, [req.user.id, limit, offset]);
+
+  res.json({
+    success: true,
+    pagination: {
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit)
+    },
+    tests: tests.map(test => ({
+      id: test.id,
+      testName: test.test_name,
+      description: test.description,
+      score: test.score,
+      totalQuestions: test.total_questions,
+      duration: test.duration,
+      timeTaken: test.time_taken,
+      completedAt: test.created_at
+    }))
+  });
+});
+
+// Get specific test result
+const getTestById = catchAsync(async (req, res) => {
+  const [tests] = await db.query(`
+    SELECT 
+      tr.*,
+      t.title as test_name,
+      t.description,
+      t.total_questions,
+      t.duration,
+      JSON_ARRAYAGG(
+        JSON_OBJECT(
+          'question_id', tq.question_id,
+          'user_answer', tq.user_answer,
+          'is_correct', tq.is_correct,
+          'points', tq.points
+        )
+      ) as questions
+    FROM test_results tr
+    JOIN tests t ON t.id = tr.test_id
+    LEFT JOIN test_questions tq ON tq.test_result_id = tr.id
+    WHERE tr.id = ? AND tr.user_id = ?
+    GROUP BY tr.id
+  `, [req.params.id, req.user.id]);
+
+  if (!tests[0]) {
+    throw new ApiError('Test result not found', 404);
+  }
+
+  const test = tests[0];
+  test.questions = JSON.parse(test.questions);
+
+  res.json({
+    success: true,
+    test: {
+      id: test.id,
+      testName: test.test_name,
+      description: test.description,
+      score: test.score,
+      totalQuestions: test.total_questions,
+      duration: test.duration,
+      timeTaken: test.time_taken,
+      completedAt: test.created_at,
+      questions: test.questions
+    }
+  });
+});
+
+// Get user settings
+const getSettings = catchAsync(async (req, res) => {
+  const [settings] = await db.query(
+    'SELECT * FROM user_settings WHERE user_id = ?',
+    [req.user.id]
+  );
+
+  // Return default settings if none exist
+  const userSettings = settings[0] || {
+    email_notifications: true,
+    dark_mode: false,
+    show_progress: true,
+    auto_save_answers: true,
+    language: 'en',
+    timezone: 'UTC'
+  };
+
+  res.json({
+    success: true,
+    settings: {
+      emailNotifications: userSettings.email_notifications,
+      darkMode: userSettings.dark_mode,
+      showProgress: userSettings.show_progress,
+      autoSaveAnswers: userSettings.auto_save_answers,
+      language: userSettings.language,
+      timezone: userSettings.timezone
+    }
+  });
+});
+
+// Update user settings
+const updateSettings = catchAsync(async (req, res) => {
+  const { setting, value } = req.body;
+
+  // Validate setting name
+  const validSettings = [
+    'emailNotifications',
+    'darkMode',
+    'showProgress',
+    'autoSaveAnswers',
+    'language',
+    'timezone'
+  ];
+
+  if (!validSettings.includes(setting)) {
+    throw new ApiError('Invalid setting', 400);
+  }
+
+  // Convert camelCase to snake_case
+  const dbSetting = setting.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+
+  // Validate value type
+  const settingTypes = {
+    email_notifications: 'boolean',
+    dark_mode: 'boolean',
+    show_progress: 'boolean',
+    auto_save_answers: 'boolean',
+    language: 'string',
+    timezone: 'string'
+  };
+
+  if (typeof value !== settingTypes[dbSetting]) {
+    throw new ApiError(`Invalid value type for ${setting}`, 400);
+  }
+
+  // Upsert settings
+  await db.query(`
+    INSERT INTO user_settings (
+      user_id, 
+      ${dbSetting}, 
+      updated_at
+    ) 
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON DUPLICATE KEY UPDATE 
+      ${dbSetting} = VALUES(${dbSetting}),
+      updated_at = VALUES(updated_at)
+  `, [req.user.id, value]);
+
+  logger.info('User settings updated', {
+    userId: req.user.id,
+    setting,
+    value
+  });
+
+  // Get updated settings
+  const [settings] = await db.query(
+    'SELECT * FROM user_settings WHERE user_id = ?',
+    [req.user.id]
+  );
+
+  res.json({
+    success: true,
+    settings: {
       emailNotifications: settings[0].email_notifications,
       darkMode: settings[0].dark_mode,
       showProgress: settings[0].show_progress,
-      autoSaveAnswers: settings[0].auto_save_answers
-    });
-  } catch (err) {
-    console.error(`Error fetching settings for user with ID ${req.user.id}:`, err);
-    handleError(res, err, 'Failed to fetch settings', 500);
-  }
-};
-
-const updateSettings = async (req, res) => {
-  try {
-    const { setting, value } = req.body;
-    
-    // Convert camelCase to snake_case
-    const settingMap = {
-      emailNotifications: 'email_notifications',
-      darkMode: 'dark_mode',
-      showProgress: 'show_progress',
-      autoSaveAnswers: 'auto_save_answers'
-    };
-
-    const dbSetting = settingMap[setting];
-    if (!dbSetting) {
-      console.error(`Invalid setting: ${setting}`);
-      return res.status(400).json({ message: 'Invalid setting' });
+      autoSaveAnswers: settings[0].auto_save_answers,
+      language: settings[0].language,
+      timezone: settings[0].timezone
     }
+  });
+});
 
-    // Check if settings exist for user
-    const [existingSettings] = await db.query(
-      'SELECT id FROM user_settings WHERE user_id = ?',
-      [req.user.id]
-    );
-
-    if (existingSettings.length === 0) {
-      // Create new settings with defaults
-      await db.query(
-        'INSERT INTO user_settings (user_id, email_notifications, dark_mode, show_progress, auto_save_answers) VALUES (?, true, false, true, true)',
-        [req.user.id]
-      );
+// Get user performance statistics
+const getPerformanceStats = catchAsync(async (req, res) => {
+  const stats = await UserPerformance.aggregate([
+    { $match: { user: req.user._id } },
+    {
+      $group: {
+        _id: '$category',
+        averageScore: { $avg: '$score' },
+        totalTests: { $sum: 1 },
+        totalCorrect: { $sum: '$correctAnswers' },
+        totalQuestions: { $sum: '$totalQuestions' },
+        averageTime: { $avg: '$timeTaken' }
+      }
     }
+  ]);
 
-    // Update the specific setting
-    await db.query(
-      `UPDATE user_settings SET ${dbSetting} = ? WHERE user_id = ?`,
-      [value, req.user.id]
-    );
-
-    // Get updated settings
-    const [updatedSettings] = await db.query(
-      'SELECT email_notifications, dark_mode, show_progress, auto_save_answers FROM user_settings WHERE user_id = ?',
-      [req.user.id]
-    );
-
-    // Convert snake_case to camelCase
-    res.json({
-      emailNotifications: updatedSettings[0].email_notifications,
-      darkMode: updatedSettings[0].dark_mode,
-      showProgress: updatedSettings[0].show_progress,
-      autoSaveAnswers: updatedSettings[0].auto_save_answers
-    });
-  } catch (err) {
-    console.error(`Error updating settings for user with ID ${req.user.id}:`, err);
-    handleError(res, err, 'Failed to update settings', 500);
-  }
-};
-
-const getUserSettings = async (req, res) => {
-  try {
-    const [settings] = await db.query(
-      'SELECT auto_save_answers FROM user_settings WHERE user_id = ?',
-      [req.user.id]
-    );
-
-    if (!settings[0]) {
-      return res.status(404).json({ message: 'Settings not found' });
+  const overall = await UserPerformance.aggregate([
+    { $match: { user: req.user._id } },
+    {
+      $group: {
+        _id: null,
+        averageScore: { $avg: '$score' },
+        totalTests: { $sum: 1 },
+        totalCorrect: { $sum: '$correctAnswers' },
+        totalQuestions: { $sum: '$totalQuestions' },
+        averageTime: { $avg: '$timeTaken' }
+      }
     }
+  ]);
 
-    res.json({
-      success: true,
-      data: settings[0]
-    });
-  } catch (error) {
-    handleError(res, error, 'Error fetching user settings');
-  }
-};
-
-const updateUserSettings = async (req, res) => {
-  const { setting, value } = req.body;
-
-  if (!setting || value === undefined) {
-    return res.status(400).json({ message: 'Setting and value are required' });
-  }
-
-  try {
-    const dbSetting = settingMap[setting];
-    if (!dbSetting) {
-      return res.status(400).json({ message: 'Invalid setting' });
+  res.json({
+    success: true,
+    data: {
+      categoryStats: stats,
+      overall: overall[0] || {
+        averageScore: 0,
+        totalTests: 0,
+        totalCorrect: 0,
+        totalQuestions: 0,
+        averageTime: 0
+      }
     }
+  });
+});
 
-    await db.query(
-      `UPDATE user_settings SET ${dbSetting} = ? WHERE user_id = ?`,
-      [value, req.user.id]
-    );
-
-    res.json({
-      success: true,
-      message: 'Settings updated successfully'
-    });
-  } catch (error) {
-    handleError(res, error, 'Error updating user settings');
+// Get recent performance history
+const getPerformanceHistory = catchAsync(async (req, res) => {
+  const { limit = 10, category } = req.query;
+  
+  const query = { user: req.user._id };
+  if (category) {
+    query.category = category;
   }
-};
+
+  const history = await UserPerformance.find(query)
+    .sort({ completedAt: -1 })
+    .limit(parseInt(limit))
+    .populate('testId', 'title')
+    .select('-answers');
+
+  res.json({ success: true, data: history });
+});
+
+// Delete user account
+const deleteAccount = catchAsync(async (req, res) => {
+  const user = await User.findById(req.user.id);
+  if (!user) {
+    throw new ApiError('User not found', 404);
+  }
+
+  // Delete user's performance records
+  await UserPerformance.deleteMany({ user: req.user.id });
+  
+  // Delete user
+  await user.remove();
+
+  res.json({ 
+    success: true, 
+    message: 'Account deleted successfully' 
+  });
+});
+
+// Get user performance details for a specific test
+const getTestPerformance = catchAsync(async (req, res) => {
+  const { testId } = req.params;
+  
+  const performance = await UserPerformance.findOne({
+    user: req.user._id,
+    testId
+  }).populate('testId', 'title category difficulty');
+
+  if (!performance) {
+    throw new ApiError('Performance record not found', 404);
+  }
+
+  res.json({ success: true, data: performance });
+});
 
 // Export the functions
 module.exports = { 
@@ -319,7 +525,9 @@ module.exports = {
   getTestHistory, 
   getTestById, 
   getSettings, 
-  updateSettings, 
-  getUserSettings, 
-  updateUserSettings 
+  updateSettings,
+  getPerformanceStats,
+  getPerformanceHistory,
+  deleteAccount,
+  getTestPerformance
 };

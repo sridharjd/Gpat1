@@ -1,13 +1,13 @@
 import TestSubmission from './TestSubmission';
-import MockTestSubmission from './MockTestSubmission';
+import TestTaking from './TestTaking';
+import TestResult from './TestResult';
 
-// Make test utilities globally available
-window.TestUtils = {
-  TestSubmission,
-  MockTestSubmission
-};
-
+// Export test components and utilities
 export {
   TestSubmission,
-  MockTestSubmission
+  TestTaking,
+  TestResult
 };
+
+// Default export for backward compatibility
+export default TestSubmission;
