@@ -7,13 +7,20 @@ const memoryCache = new Map();
 let redisClient = null;
 let useMemoryCache = true;
 
-// Only attempt Redis connection if REDIS_URL is provided
-if (process.env.REDIS_URL) {
+// Only attempt Redis connection if Redis configuration is provided
+if (process.env.REDIS_URL || (process.env.REDIS_HOST && process.env.REDIS_PORT)) {
   try {
     // Create Redis client
-    redisClient = createClient({
-      url: process.env.REDIS_URL
-    });
+    redisClient = createClient(
+      process.env.REDIS_URL ? {
+        url: process.env.REDIS_URL
+      } : {
+        socket: {
+          host: process.env.REDIS_HOST,
+          port: parseInt(process.env.REDIS_PORT, 10)
+        }
+      }
+    );
 
     redisClient.on('error', (err) => {
       logger.warn('Redis Client Error, falling back to memory cache:', err.message);
@@ -35,16 +42,18 @@ if (process.env.REDIS_URL) {
     useMemoryCache = true;
   }
 } else {
-  logger.info('No Redis URL provided, using memory cache');
+  logger.info('No Redis configuration provided, using memory cache');
 }
 
 class Cache {
   static async get(key) {
     try {
       if (!useMemoryCache && redisClient?.isReady) {
-        return await redisClient.get(key);
+        const value = await redisClient.get(key);
+        return value ? JSON.parse(value) : null;
+      } else {
+        return memoryCache.get(key);
       }
-      return memoryCache.get(key);
     } catch (error) {
       logger.warn('Cache get error, falling back to memory cache:', error.message);
       return memoryCache.get(key);
@@ -54,7 +63,7 @@ class Cache {
   static async set(key, value, ttl = 300) { // Default TTL: 5 minutes
     try {
       if (!useMemoryCache && redisClient?.isReady) {
-        await redisClient.set(key, value, { EX: ttl });
+        await redisClient.set(key, JSON.stringify(value), { EX: ttl });
       } else {
         memoryCache.set(key, value);
         setTimeout(() => memoryCache.delete(key), ttl * 1000);
@@ -66,26 +75,28 @@ class Cache {
     }
   }
 
-  static async del(key) {
+  static async delete(key) {
     try {
       if (!useMemoryCache && redisClient?.isReady) {
         await redisClient.del(key);
+      } else {
+        memoryCache.delete(key);
       }
-      memoryCache.delete(key);
     } catch (error) {
       logger.warn('Cache delete error, falling back to memory cache:', error.message);
       memoryCache.delete(key);
     }
   }
 
-  static async flush() {
+  static async clear() {
     try {
       if (!useMemoryCache && redisClient?.isReady) {
         await redisClient.flushAll();
+      } else {
+        memoryCache.clear();
       }
-      memoryCache.clear();
     } catch (error) {
-      logger.warn('Cache flush error, falling back to memory cache:', error.message);
+      logger.warn('Cache clear error, falling back to memory cache:', error.message);
       memoryCache.clear();
     }
   }

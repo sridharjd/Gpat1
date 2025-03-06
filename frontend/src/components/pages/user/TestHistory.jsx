@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Container,
@@ -41,81 +41,93 @@ import {
   Assessment as AssessmentIcon,
   Timer as TimerIcon,
   CheckCircle as CheckCircleIcon,
-  Error as ErrorIcon
+  Error as ErrorIcon,
+  Refresh as RefreshIcon
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 import apiService from '../../../services/api';
-import MockTestSubmission from '../../test/MockTestSubmission';
-import mockData from '../../../services/mockData';
-import ExportUtils from '../../../utils/exportUtils';
 import { useAuth } from '../../../contexts/AuthContext';
+import ExportUtils from '../../../utils/exportUtils';
 
-const MotionCard = motion(Card);
 const MotionPaper = motion(Paper);
+const MotionCard = motion(Card);
 
 const TestHistory = () => {
   const theme = useTheme();
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const [tests, setTests] = useState([]);
+  const { user, logout } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [stats, setStats] = useState(null);
+  const [error, setError] = useState(null);
+  const [testHistory, setTestHistory] = useState([]);
+  const [testStats, setTestStats] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState('date');
   const [sortDirection, setSortDirection] = useState('desc');
-  const [filterSubject, setFilterSubject] = useState('all');
-  const [searchTerm, setSearchTerm] = useState('');
   const [exportMenuAnchor, setExportMenuAnchor] = useState(null);
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [filters, setFilters] = useState({
+    subject: 'all',
+    status: 'all',
+    dateRange: 'all'
+  });
+
+  const handleApiError = useCallback((error) => {
+    console.error('API Error:', error);
+    if (error.response) {
+      if (error.response.status === 401) {
+        logout();
+        return;
+      }
+      setError('Failed to fetch test history. Please try again later.');
+    } else if (error.request) {
+      setError('Network error. Please check your connection.');
+    } else {
+      setError('An unexpected error occurred.');
+    }
+  }, [logout]);
+
+  const fetchTestHistory = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await apiService.tests.getHistory();
+      
+      if (!response?.data?.success) {
+        throw new Error('Failed to fetch test history');
+      }
+
+      setTestHistory(response.data.data || []);
+    } catch (err) {
+      console.error('Error fetching test history:', err);
+      handleApiError(err);
+    } finally {
+      setLoading(false);
+    }
+  }, [handleApiError]);
+
+  const fetchTestStats = useCallback(async () => {
+    try {
+      const response = await apiService.tests.getStats();
+      
+      if (!response?.data?.success) {
+        throw new Error('Failed to fetch test statistics');
+      }
+
+      setTestStats(response.data.data);
+    } catch (err) {
+      console.error('Error fetching test statistics:', err);
+    }
+  }, []);
 
   useEffect(() => {
     fetchTestHistory();
     fetchTestStats();
-  }, []);
-
-  const fetchTestHistory = async () => {
-    setLoading(true);
-    setError('');
-
-    try {
-      // Try to fetch real test history
-      const response = await apiService.tests.getHistory();
-      setTests(response.data);
-      console.log('Test history fetched successfully:', response.data);
-    } catch (err) {
-      console.error('Failed to fetch test history:', err);
-      setError('Failed to load test history. Please try again later.');
-      // Only use mock data in development
-      if (process.env.NODE_ENV === 'development') {
-        console.log('Using mock data in development mode');
-        const mockTests = mockData.getAllSubmittedTests();
-        setTests(mockTests);
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchTestStats = async () => {
-    try {
-      const response = await apiService.tests.getStats();
-      setStats(response.data);
-    } catch (err) {
-      console.error('Failed to fetch test stats:', err);
-      setError('Failed to load test statistics.');
-      // Only use mock data in development
-      if (process.env.NODE_ENV === 'development') {
-        console.log('Using mock data in development mode');
-        setStats(mockData.getTestStats());
-      }
-    }
-  };
+  }, [fetchTestHistory, fetchTestStats]);
 
   const formatTime = (seconds) => {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
-    return `${minutes}m ${remainingSeconds}s`;
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
 
   const handleSort = (field) => {
@@ -129,9 +141,7 @@ const TestHistory = () => {
 
   const getSortIcon = (field) => {
     if (sortField !== field) return null;
-    return sortDirection === 'asc' ? 
-      <ArrowUpwardIcon fontSize="small" /> : 
-      <ArrowDownwardIcon fontSize="small" />;
+    return sortDirection === 'asc' ? <ArrowUpwardIcon /> : <ArrowDownwardIcon />;
   };
 
   const handleExportMenuOpen = (event) => {
@@ -143,285 +153,271 @@ const TestHistory = () => {
   };
 
   const exportToPDF = () => {
-    ExportUtils.exportTestHistoryToPDF(filteredAndSortedTests, user?.name || 'User');
     handleExportMenuClose();
+    ExportUtils.exportToPDF(testHistory, 'Test History');
   };
 
   const exportToExcel = () => {
-    ExportUtils.exportTestHistoryToExcel(filteredAndSortedTests);
     handleExportMenuClose();
+    ExportUtils.exportToExcel(testHistory, 'Test History');
   };
 
   const handleViewResult = (test) => {
     navigate(`/test-result/${test.id}`);
   };
 
-  // Filter and sort tests
-  const filteredAndSortedTests = tests
+  const filteredTests = testHistory
     .filter(test => {
-      if (filterSubject !== 'all' && test.subject !== filterSubject) {
-        return false;
-      }
-      if (searchTerm && !test.name.toLowerCase().includes(searchTerm.toLowerCase())) {
-        return false;
-      }
-      return true;
+      const matchesSearch = test.subject_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        test.score?.toString().includes(searchTerm);
+      const matchesSubject = filters.subject === 'all' || test.subject_name === filters.subject;
+      const matchesStatus = filters.status === 'all' || 
+        (filters.status === 'passed' && test.score >= 70) ||
+        (filters.status === 'failed' && test.score < 70);
+      return matchesSearch && matchesSubject && matchesStatus;
     })
     .sort((a, b) => {
-      let comparison = 0;
-      switch (sortField) {
-        case 'name':
-          comparison = a.name.localeCompare(b.name);
-          break;
-        case 'subject':
-          comparison = a.subject.localeCompare(b.subject);
-          break;
-        case 'date':
-          comparison = new Date(b.date) - new Date(a.date);
-          break;
-        case 'score':
-          comparison = b.score - a.score;
-          break;
-        default:
-          comparison = 0;
-      }
-      return sortDirection === 'asc' ? -comparison : comparison;
+      const aValue = a[sortField];
+      const bValue = b[sortField];
+      const direction = sortDirection === 'asc' ? 1 : -1;
+      return aValue > bValue ? direction : -direction;
     });
-
-  const containerVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: {
-      opacity: 1,
-      y: 0,
-      transition: {
-        duration: 0.5,
-        staggerChildren: 0.1
-      }
-    }
-  };
-
-  const itemVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: {
-      opacity: 1,
-      y: 0,
-      transition: { duration: 0.5 }
-    }
-  };
 
   if (loading) {
     return (
-      <Container maxWidth="lg" sx={{ py: 4, textAlign: 'center' }}>
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
         <CircularProgress />
-        <Typography variant="h6" sx={{ mt: 2 }}>Loading test history...</Typography>
-      </Container>
+      </Box>
     );
   }
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
-      <MotionPaper
-        elevation={3}
-        variants={containerVariants}
-        initial="hidden"
-        animate="visible"
-        sx={{ p: 4 }}
-      >
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
-          <Typography variant="h4">Test History</Typography>
+      {error && (
+        <Box sx={{ mb: 2 }}>
+          <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>
           <Button
             variant="contained"
-            onClick={handleExportMenuOpen}
-            startIcon={<DownloadIcon />}
-            sx={{ borderRadius: 2 }}
+            onClick={fetchTestHistory}
+            startIcon={<RefreshIcon />}
           >
-            Export
+            Retry
           </Button>
         </Box>
+      )}
 
-        {/* Stats Cards */}
-        {stats && (
-          <Grid container spacing={3} sx={{ mb: 4 }}>
-            <Grid item xs={12} sm={6} md={3}>
-              <MotionCard
-                variants={itemVariants}
-                whileHover={{ scale: 1.02, boxShadow: theme.shadows[8] }}
-              >
-                <CardContent sx={{ textAlign: 'center' }}>
-                  <AssessmentIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-                  <Typography variant="h6">Total Tests</Typography>
-                  <Typography variant="h4" color="primary">{stats.totalTests}</Typography>
-                </CardContent>
-              </MotionCard>
-            </Grid>
+      <Typography variant="h4" gutterBottom>
+        Test History
+      </Typography>
 
-            <Grid item xs={12} sm={6} md={3}>
-              <MotionCard
-                variants={itemVariants}
-                whileHover={{ scale: 1.02, boxShadow: theme.shadows[8] }}
-              >
-                <CardContent sx={{ textAlign: 'center' }}>
-                  <CheckCircleIcon color="success" sx={{ fontSize: 40, mb: 1 }} />
-                  <Typography variant="h6">Average Score</Typography>
-                  <Typography variant="h4" color="success.main">{stats.averageScore}%</Typography>
-                </CardContent>
-              </MotionCard>
-            </Grid>
-
-            <Grid item xs={12} sm={6} md={3}>
-              <MotionCard
-                variants={itemVariants}
-                whileHover={{ scale: 1.02, boxShadow: theme.shadows[8] }}
-              >
-                <CardContent sx={{ textAlign: 'center' }}>
-                  <TimerIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-                  <Typography variant="h6">Total Time</Typography>
-                  <Typography variant="h4">{formatTime(stats.totalTime)}</Typography>
-                </CardContent>
-              </MotionCard>
-            </Grid>
-
-            <Grid item xs={12} sm={6} md={3}>
-              <MotionCard
-                variants={itemVariants}
-                whileHover={{ scale: 1.02, boxShadow: theme.shadows[8] }}
-              >
-                <CardContent sx={{ textAlign: 'center' }}>
-                  <AssessmentIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-                  <Typography variant="h6">Pass Rate</Typography>
-                  <Typography variant="h4" color="primary">{stats.passRate}%</Typography>
-                </CardContent>
-              </MotionCard>
-            </Grid>
+      {/* Summary Cards */}
+      {testStats && (
+        <Grid container spacing={3} sx={{ mb: 4 }}>
+          <Grid item xs={12} sm={6} md={3}>
+            <Card>
+              <CardContent sx={{ textAlign: 'center' }}>
+                <AssessmentIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
+                <Typography variant="h6">Total Tests</Typography>
+                <Typography variant="h4">{testStats.total_tests}</Typography>
+              </CardContent>
+            </Card>
           </Grid>
-        )}
+          <Grid item xs={12} sm={6} md={3}>
+            <Card>
+              <CardContent sx={{ textAlign: 'center' }}>
+                <CheckCircleIcon color="success" sx={{ fontSize: 40, mb: 1 }} />
+                <Typography variant="h6">Average Score</Typography>
+                <Typography variant="h4" color="success.main">
+                  {Math.round(testStats.average_score)}%
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <Card>
+              <CardContent sx={{ textAlign: 'center' }}>
+                <TimerIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
+                <Typography variant="h6">Avg. Time</Typography>
+                <Typography variant="h4">
+                  {formatTime(testStats.average_time)}
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <Card>
+              <CardContent sx={{ textAlign: 'center' }}>
+                <AssessmentIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
+                <Typography variant="h6">Pass Rate</Typography>
+                <Typography variant="h4" color="primary">
+                  {Math.round(testStats.pass_rate)}%
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
+      )}
 
-        {/* Filters */}
-        <Card sx={{ mb: 4 }}>
-          <CardContent>
-            <Grid container spacing={2} alignItems="center">
-              <Grid item xs={12} md={6}>
-                <TextField
-                  fullWidth
-                  label="Search Tests"
-                  variant="outlined"
-                  size="small"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <SearchIcon />
-                      </InputAdornment>
-                    ),
-                  }}
-                />
-              </Grid>
-              
-              <Grid item xs={12} md={6}>
-                <TextField
-                  select
-                  fullWidth
-                  label="Filter by Subject"
-                  variant="outlined"
-                  size="small"
-                  value={filterSubject}
-                  onChange={(e) => setFilterSubject(e.target.value)}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <FilterIcon />
-                      </InputAdornment>
-                    ),
-                  }}
-                >
-                  <MenuItem value="all">All Subjects</MenuItem>
-                  <MenuItem value="Pharmacology">Pharmacology</MenuItem>
-                  <MenuItem value="Medicinal Chemistry">Medicinal Chemistry</MenuItem>
-                  <MenuItem value="Pharmaceutics">Pharmaceutics</MenuItem>
-                  <MenuItem value="Pharmaceutical Analysis">Pharmaceutical Analysis</MenuItem>
-                </TextField>
-              </Grid>
-            </Grid>
-          </CardContent>
-        </Card>
+      {/* Filters and Search */}
+      <Paper sx={{ p: 2, mb: 3 }}>
+        <Grid container spacing={2} alignItems="center">
+          <Grid item xs={12} sm={6} md={3}>
+            <TextField
+              fullWidth
+              variant="outlined"
+              placeholder="Search tests..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon />
+                  </InputAdornment>
+                ),
+              }}
+            />
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <TextField
+              fullWidth
+              select
+              variant="outlined"
+              label="Subject"
+              value={filters.subject}
+              onChange={(e) => setFilters({ ...filters, subject: e.target.value })}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <FilterIcon />
+                  </InputAdornment>
+                ),
+              }}
+            >
+              <MenuItem value="all">All Subjects</MenuItem>
+              <MenuItem value="Pharmacology">Pharmacology</MenuItem>
+              <MenuItem value="Medicinal Chemistry">Medicinal Chemistry</MenuItem>
+              <MenuItem value="Pharmaceutics">Pharmaceutics</MenuItem>
+              <MenuItem value="Pharmaceutical Analysis">Pharmaceutical Analysis</MenuItem>
+            </TextField>
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <TextField
+              fullWidth
+              select
+              variant="outlined"
+              label="Status"
+              value={filters.status}
+              onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+            >
+              <MenuItem value="all">All Status</MenuItem>
+              <MenuItem value="passed">Passed</MenuItem>
+              <MenuItem value="failed">Failed</MenuItem>
+            </TextField>
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <Button
+              fullWidth
+              variant="contained"
+              onClick={handleExportMenuOpen}
+              startIcon={<DownloadIcon />}
+            >
+              Export
+            </Button>
+            <Menu
+              anchorEl={exportMenuAnchor}
+              open={Boolean(exportMenuAnchor)}
+              onClose={handleExportMenuClose}
+            >
+              <MenuItem onClick={exportToPDF}>
+                <ListItemIcon>
+                  <PdfIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText>Export as PDF</ListItemText>
+              </MenuItem>
+              <MenuItem onClick={exportToExcel}>
+                <ListItemIcon>
+                  <ExcelIcon fontSize="small" />
+                </ListItemIcon>
+                <ListItemText>Export as Excel</ListItemText>
+              </MenuItem>
+            </Menu>
+          </Grid>
+        </Grid>
+      </Paper>
 
-        {/* Test History Table */}
-        <TableContainer component={Paper} elevation={0}>
-          <Table>
-            <TableHead>
-              <TableRow>
+      {/* Test History Table */}
+      <TableContainer component={Paper}>
+        <Table>
+          <TableHead>
+            <TableRow>
+              <TableCell>
+                <Box sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}
+                  onClick={() => handleSort('subject_name')}>
+                  Subject
+                  {getSortIcon('subject_name')}
+                </Box>
+              </TableCell>
+              <TableCell>
+                <Box sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}
+                  onClick={() => handleSort('score')}>
+                  Score
+                  {getSortIcon('score')}
+                </Box>
+              </TableCell>
+              <TableCell>
+                <Box sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}
+                  onClick={() => handleSort('time_taken')}>
+                  Time Taken
+                  {getSortIcon('time_taken')}
+                </Box>
+              </TableCell>
+              <TableCell>
+                <Box sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}
+                  onClick={() => handleSort('created_at')}>
+                  Date
+                  {getSortIcon('created_at')}
+                </Box>
+              </TableCell>
+              <TableCell>Status</TableCell>
+              <TableCell>Actions</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {filteredTests.map((test) => (
+              <TableRow key={test.id}>
+                <TableCell>{test.subject_name}</TableCell>
+                <TableCell>{test.score}%</TableCell>
+                <TableCell>{formatTime(test.time_taken)}</TableCell>
+                <TableCell>{new Date(test.created_at).toLocaleDateString()}</TableCell>
                 <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }} onClick={() => handleSort('name')}>
-                    Test Name {getSortIcon('name')}
-                  </Box>
+                  <Chip
+                    label={test.score >= 70 ? 'Passed' : 'Failed'}
+                    color={test.score >= 70 ? 'success' : 'error'}
+                    size="small"
+                  />
                 </TableCell>
                 <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }} onClick={() => handleSort('subject')}>
-                    Subject {getSortIcon('subject')}
-                  </Box>
+                  <IconButton
+                    color="primary"
+                    onClick={() => handleViewResult(test)}
+                    size="small"
+                  >
+                    <VisibilityIcon />
+                  </IconButton>
                 </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }} onClick={() => handleSort('date')}>
-                    Date {getSortIcon('date')}
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }} onClick={() => handleSort('score')}>
-                    Score {getSortIcon('score')}
-                  </Box>
-                </TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell>Actions</TableCell>
               </TableRow>
-            </TableHead>
-            <TableBody>
-              {filteredAndSortedTests
-                .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
-                .map((test) => (
-                  <TableRow key={test.id} hover>
-                    <TableCell>{test.name}</TableCell>
-                    <TableCell>{test.subject}</TableCell>
-                    <TableCell>{new Date(test.date).toLocaleDateString()}</TableCell>
-                    <TableCell>{test.score}%</TableCell>
-                    <TableCell>
-                      <Chip
-                        label={test.status}
-                        color={test.status === 'Passed' ? 'success' : 'error'}
-                        size="small"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <IconButton onClick={() => handleViewResult(test)} color="primary">
-                        <VisibilityIcon />
-                      </IconButton>
-                    </TableCell>
-                  </TableRow>
-                ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
 
-        {/* Export Menu */}
-        <Menu
-          anchorEl={exportMenuAnchor}
-          open={Boolean(exportMenuAnchor)}
-          onClose={handleExportMenuClose}
-        >
-          <MenuItem onClick={exportToPDF}>
-            <ListItemIcon>
-              <PdfIcon fontSize="small" />
-            </ListItemIcon>
-            <ListItemText>Export as PDF</ListItemText>
-          </MenuItem>
-          <MenuItem onClick={exportToExcel}>
-            <ListItemIcon>
-              <ExcelIcon fontSize="small" />
-            </ListItemIcon>
-            <ListItemText>Export as Excel</ListItemText>
-          </MenuItem>
-        </Menu>
-      </MotionPaper>
+      {filteredTests.length === 0 && !loading && (
+        <Paper sx={{ p: 3, textAlign: 'center', mt: 3 }}>
+          <Typography variant="h6" color="text.secondary">
+            No test history found
+          </Typography>
+        </Paper>
+      )}
     </Container>
   );
 };

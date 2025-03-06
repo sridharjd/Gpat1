@@ -2,28 +2,35 @@ const nodemailer = require('nodemailer');
 const config = require('../config/env');
 const logger = require('../config/logger');
 
-// Create reusable transporter object using SMTP transport
-const transporter = nodemailer.createTransport({
-  host: config.email.smtp.host,
-  port: config.email.smtp.port,
-  secure: config.email.smtp.port === 465, // true for 465, false for other ports
-  auth: {
-    user: config.email.smtp.auth.user,
-    pass: config.email.smtp.auth.pass,
-  },
-});
+let transporter = null;
 
-// Verify transporter connection only in production
-if (process.env.NODE_ENV === 'production') {
-  transporter.verify()
-    .then(() => {
-      logger.info('SMTP connection established successfully');
-    })
-    .catch((error) => {
-      logger.error('SMTP connection failed:', error);
-    });
+// Only create transporter if email configuration is provided
+if (config.email.smtp.host && config.email.smtp.port && config.email.smtp.auth.user && config.email.smtp.auth.pass) {
+  // Create reusable transporter object using SMTP transport
+  transporter = nodemailer.createTransport({
+    host: config.email.smtp.host,
+    port: config.email.smtp.port,
+    secure: config.email.smtp.port === 465, // true for 465, false for other ports
+    auth: {
+      user: config.email.smtp.auth.user,
+      pass: config.email.smtp.auth.pass,
+    },
+  });
+
+  // Verify transporter connection only in production
+  if (process.env.NODE_ENV === 'production') {
+    transporter.verify()
+      .then(() => {
+        logger.info('SMTP connection established successfully');
+      })
+      .catch((error) => {
+        logger.error('SMTP connection failed:', error);
+      });
+  } else {
+    logger.info('Running in development mode - SMTP verification skipped');
+  }
 } else {
-  logger.info('Running in development mode - SMTP verification skipped');
+  logger.info('Email configuration not provided - email functionality disabled');
 }
 
 /**
@@ -35,6 +42,11 @@ if (process.env.NODE_ENV === 'production') {
  * @param {string} options.html - HTML version of the email
  */
 const sendEmail = async ({ to, subject, text, html }) => {
+  if (!transporter) {
+    logger.info('Email not sent - email configuration not provided');
+    return null;
+  }
+
   try {
     const mailOptions = {
       from: config.email.from,
@@ -64,6 +76,11 @@ const sendEmail = async ({ to, subject, text, html }) => {
  * @param {string} token - Verification token
  */
 const sendVerificationEmail = async (to, token) => {
+  if (!transporter) {
+    logger.info('Verification email not sent - email configuration not provided');
+    return null;
+  }
+
   const subject = 'Email Verification - GPAT Prep';
   const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email/${token}`;
   

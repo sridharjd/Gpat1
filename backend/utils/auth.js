@@ -10,8 +10,8 @@ const { ApiError } = require('./errors');
 const generateTokens = async (user) => {
   const payload = {
     id: user.id,
-    isAdmin: Boolean(user.is_admin),
-    isVerified: Boolean(user.is_verified)
+    email: user.email,
+    isAdmin: Boolean(user.is_admin)
   };
 
   const accessToken = jwt.sign(payload, config.jwt.secret, {
@@ -49,15 +49,16 @@ const verifyToken = async (token) => {
 };
 
 /**
- * Extract token from request header
+ * Extract token from request
  * @param {Object} req - Express request object
- * @returns {string|null} - Token or null if not found
+ * @returns {string|null} - Token if found, null otherwise
  */
 const extractToken = (req) => {
-  if (req.headers.authorization?.startsWith('Bearer ')) {
-    return req.headers.authorization.substring(7);
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return null;
   }
-  return null;
+  return authHeader.split(' ')[1];
 };
 
 /**
@@ -87,32 +88,26 @@ const authenticate = async (req, res, next) => {
  * @param {Object} res - Express response object
  * @param {Function} next - Express next function
  */
-const authorizeAdmin = async (req, res, next) => {
-  try {
-    if (!req.user?.isAdmin) {
-      throw new ApiError('Admin access required', 403);
-    }
-    next();
-  } catch (error) {
-    next(error);
+const authorizeAdmin = (req, res, next) => {
+  if (!req.user || !req.user.isAdmin) {
+    next(new ApiError('Admin access required', 403));
+    return;
   }
+  next();
 };
 
 /**
- * Verified user middleware
+ * Email verification middleware
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
  * @param {Function} next - Express next function
  */
-const requireVerified = async (req, res, next) => {
-  try {
-    if (!req.user?.isVerified) {
-      throw new ApiError('Email verification required', 403);
-    }
-    next();
-  } catch (error) {
-    next(error);
+const requireVerified = (req, res, next) => {
+  if (!req.user || !req.user.isVerified) {
+    next(new ApiError('Email verification required', 403));
+    return;
   }
+  next();
 };
 
 module.exports = {

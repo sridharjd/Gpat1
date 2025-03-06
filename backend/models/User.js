@@ -179,6 +179,25 @@ class User {
       throw new ApiError('Failed to find user', 500);
     }
   }
+
+  static async updateActiveStatus(id, isActive) {
+    try {
+      const [result] = await db.query(
+        'UPDATE users SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [isActive, id]
+      );
+
+      if (result.affectedRows === 0) {
+        throw new ApiError('User not found', 404);
+      }
+
+      return true;
+    } catch (error) {
+      logger.error('Error updating user active status:', error);
+      if (error instanceof ApiError) throw error;
+      throw new ApiError('Failed to update user active status', 500);
+    }
+  }
 }
 
 module.exports = User;

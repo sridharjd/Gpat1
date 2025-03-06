@@ -4,16 +4,25 @@ const { ApiError } = require('../utils/errors');
 const { catchAsync } = require('../utils/errors');
 const { validateTest } = require('../utils/validation');
 const cache = require('../config/cache');
+const { safeToUpperCase } = require('../utils/stringUtils');
 
+// Error handler helper
 const handleError = (res, error, message, statusCode = 500) => {
   console.error(message, error);
   res.status(statusCode).json({ message, error: error.message });
 };
 
+// Helper function to normalize answer
+const normalizeAnswer = (answer) => {
+  if (!answer) return null;
+  return String(answer).trim().toLowerCase();
+};
+
 // Get test questions with caching
 const getTestQuestions = catchAsync(async (req, res) => {
-  const { subject_id, year, count = 10, difficulty } = req.query;
-  
+  const { count = 10, subject_id, year } = req.query;
+  const userId = req.user.id;
+
   let query = `
     SELECT 
       q.id,
@@ -23,59 +32,66 @@ const getTestQuestions = catchAsync(async (req, res) => {
       q.option_c,
       q.option_d,
       q.correct_answer,
-      q.year,
-      q.difficulty_level,
-      s.name as subject_name,
-      s.code as subject_code
+      q.explanation,
+      q.degree,
+      s.name as subject_name
     FROM questions q
     JOIN subjects s ON q.subject_id = s.id
     WHERE q.is_active = true
   `;
-  
+
   const params = [];
-  
+
   if (subject_id) {
-    query += ' AND q.subject_id IN (?)';
-    params.push(subject_id.split(','));
+    query += ' AND q.subject_id = ?';
+    params.push(subject_id);
   }
 
   if (year) {
-    query += ' AND q.year IN (?)';
-    params.push(year.split(','));
+    query += ' AND q.year = ?';
+    params.push(year);
   }
 
-  if (difficulty) {
-    query += ' AND q.difficulty_level IN (?)';
-    params.push(difficulty.split(','));
-  }
-  
   query += ' ORDER BY RAND() LIMIT ?';
   params.push(parseInt(count));
 
+  console.log('Executing query:', query);
+  console.log('With params:', params);
+
   const [questions] = await db.query(query, params);
+  console.log('Query result:', questions);
 
-  if (!questions || questions.length === 0) {
-    throw new ApiError('No questions found for the given criteria', 404);
+  if (!questions.length) {
+    // Let's check if there are any questions at all
+    const [allQuestions] = await db.query('SELECT COUNT(*) as count FROM questions');
+    console.log('Total questions in database:', allQuestions[0].count);
+    
+    // Check if there are any active questions
+    const [activeQuestions] = await db.query('SELECT COUNT(*) as count FROM questions WHERE is_active = true');
+    console.log('Active questions in database:', activeQuestions[0].count);
+    
+    throw new ApiError('No questions found for the selected criteria', 404);
   }
-
-  // Remove correct_answer from response for security
-  const sanitizedQuestions = questions.map(q => {
-    const { correct_answer, ...rest } = q;
-    return {
-      ...rest,
-      options: {
-        a: q.option_a,
-        b: q.option_b,
-        c: q.option_c,
-        d: q.option_d
-      }
-    };
-  });
 
   res.json({
     success: true,
-    count: sanitizedQuestions.length,
-    questions: sanitizedQuestions
+    data: questions.map(question => ({
+      id: question.id,
+      question: question.question_text,
+      options: {
+        A: question.option_a,
+        B: question.option_b,
+        C: question.option_c,
+        D: question.option_d
+      },
+      correctAnswer: question.correct_answer,
+      explanation: question.explanation,
+      difficulty: question.degree,
+      subject: {
+        id: question.subject_id,
+        name: question.subject_name
+      }
+    }))
   });
 });
 
@@ -89,57 +105,37 @@ const getTestFilters = catchAsync(async (req, res) => {
   }
 
   // Get subjects
-  const [subjects] = await db.query(`
-    SELECT 
-      id, 
-      name,
-      code,
-      COUNT(q.id) as question_count
-    FROM subjects s
-    LEFT JOIN questions q ON q.subject_id = s.id AND q.is_active = true
-    GROUP BY s.id
-    HAVING question_count > 0
-    ORDER BY s.name
-  `);
+  const [subjects] = await db.query(
+    'SELECT id, name FROM subjects WHERE is_active = true ORDER BY name'
+  );
 
   // Get years with question counts
-  const [years] = await db.query(`
-    SELECT 
-      year,
-      COUNT(*) as question_count
-    FROM questions
-    WHERE year IS NOT NULL AND is_active = true
-    GROUP BY year
-    ORDER BY year DESC
-  `);
+  const [years] = await db.query(
+    'SELECT DISTINCT year FROM questions WHERE year IS NOT NULL ORDER BY year DESC'
+  );
 
   // Get difficulty levels with counts
   const [difficulties] = await db.query(`
     SELECT 
-      difficulty_level,
+      degree,
       COUNT(*) as question_count
     FROM questions
-    WHERE difficulty_level IS NOT NULL AND is_active = true
-    GROUP BY difficulty_level
-    ORDER BY difficulty_level
+    WHERE degree IS NOT NULL AND is_active = true
+    GROUP BY degree
+    ORDER BY degree
   `);
 
   const result = {
     success: true,
-    filters: {
+    data: {
       subjects: subjects.map(s => ({
         id: s.id,
-        name: s.name,
-        code: s.code,
-        questionCount: s.question_count
+        name: s.name
       })),
-      years: years.map(y => ({
-        year: y.year,
-        questionCount: y.question_count
-      })),
+      years: years.map(y => y.year),
       difficulties: difficulties.map(d => ({
-        level: d.difficulty_level,
-        questionCount: d.question_count
+        level: d.degree,
+        count: d.question_count
       }))
     }
   };
@@ -209,9 +205,22 @@ const submitTest = catchAsync(async (req, res) => {
     
     for (const [questionId, answer] of Object.entries(answers)) {
       const question = questionMap.get(parseInt(questionId));
-      if (!question) continue;
+      if (!question) {
+        console.log(`Question not found for ID: ${questionId}`);
+        continue;
+      }
 
-      const isCorrect = answer.toUpperCase() === question.answer.toUpperCase();
+      // Add null checks for answer and question.answer
+      if (!answer || !question.answer) {
+        console.log(`Missing answer for question ID: ${questionId}`);
+        continue;
+      }
+
+      // Ensure both answer and question.answer are strings before calling toUpperCase
+      const userAnswer = safeToUpperCase(answer);
+      const correctAnswer = safeToUpperCase(question.answer);
+      const isCorrect = userAnswer === correctAnswer;
+
       if (isCorrect) {
         totalScore += question.points || 1;
       }
@@ -219,7 +228,7 @@ const submitTest = catchAsync(async (req, res) => {
       answerValues.push([
         testId,
         questionId,
-        answer.toUpperCase(),
+        userAnswer,
         isCorrect,
         question.points || 1,
         new Date()
@@ -227,19 +236,21 @@ const submitTest = catchAsync(async (req, res) => {
     }
 
     // 4. Bulk insert answers
-    if (answerValues.length > 0) {
-      await connection.query(
-        `INSERT INTO test_answers (
-          test_id,
-          question_id,
-          selected_answer,
-          is_correct,
-          points,
-          created_at
-        ) VALUES ?`,
-        [answerValues]
-      );
+    if (answerValues.length === 0) {
+      throw new ApiError('No valid answers provided', 400);
     }
+
+    await connection.query(
+      `INSERT INTO test_answers (
+        test_id,
+        question_id,
+        selected_answer,
+        is_correct,
+        points,
+        created_at
+      ) VALUES ?`,
+      [answerValues]
+    );
     
     // 5. Update final score
     await connection.query(
@@ -248,54 +259,25 @@ const submitTest = catchAsync(async (req, res) => {
     );
 
     // 6. Update user statistics
-    await connection.query(`
-      INSERT INTO user_statistics (
-        user_id,
-        total_tests,
-        total_score,
-        total_time,
-        avg_score,
-        last_test_at
-      ) VALUES (?, 1, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON DUPLICATE KEY UPDATE
-        total_tests = total_tests + 1,
-        total_score = total_score + ?,
-        total_time = total_time + ?,
-        avg_score = (total_score + ?) / (total_tests + 1),
-        last_test_at = CURRENT_TIMESTAMP
-    `, [
-      userId,
-      totalScore,
-      testData.timeTaken || 0,
-      totalScore,
-      totalScore,
-      testData.timeTaken || 0,
-      totalScore
-    ]);
-    
+    await connection.query(
+      `UPDATE user_statistics 
+       SET 
+         total_tests = total_tests + 1,
+         total_score = total_score + ?,
+         average_score = (total_score + ?) / (total_tests + 1)
+       WHERE user_id = ?`,
+      [totalScore, totalScore, userId]
+    );
+
     await connection.commit();
 
-    // Clear related caches
-    await Promise.all([
-      cache.del(`user:${userId}:stats`),
-      cache.del(`user:${userId}:tests:*`)
-    ]);
-
-    logger.info('Test submitted successfully', {
-      userId,
-      testId,
-      score: totalScore,
-      questionCount: answerValues.length
-    });
-
-    res.status(201).json({
+    res.json({
       success: true,
       test: {
         id: testId,
         score: totalScore,
         totalQuestions: answerValues.length,
-        timeTaken: testData.timeTaken || 0,
-        subjectId: testData.subjectId
+        timeTaken: testData.timeTaken
       }
     });
   } catch (error) {
@@ -338,7 +320,6 @@ const getTestHistory = catchAsync(async (req, res) => {
       tr.time_taken,
       tr.created_at,
       s.name as subject_name,
-      s.code as subject_code,
       (
         SELECT COUNT(*)
         FROM test_answers ta
@@ -374,8 +355,7 @@ const getTestHistory = catchAsync(async (req, res) => {
       timeTaken: test.time_taken,
       completedAt: test.created_at,
       subject: test.subject_name ? {
-        name: test.subject_name,
-        code: test.subject_code
+        name: test.subject_name
       } : null,
       topics: test.topics ? test.topics.split(',') : []
     }))
@@ -404,8 +384,6 @@ const getTestById = catchAsync(async (req, res) => {
   const [tests] = await db.query(`
     SELECT 
       tr.*,
-      s.name as subject_name,
-      s.code as subject_code,
       JSON_ARRAYAGG(
         JSON_OBJECT(
           'questionId', ta.question_id,
@@ -418,7 +396,6 @@ const getTestById = catchAsync(async (req, res) => {
         )
       ) as answers
     FROM test_results tr
-    LEFT JOIN subjects s ON tr.subject_id = s.id
     LEFT JOIN test_answers ta ON tr.id = ta.test_id
     LEFT JOIN questions q ON ta.question_id = q.id
     WHERE tr.id = ? AND tr.user_id = ?
@@ -442,8 +419,7 @@ const getTestById = catchAsync(async (req, res) => {
       timeTaken: test.time_taken,
       completedAt: test.created_at,
       subject: test.subject_name ? {
-        name: test.subject_name,
-        code: test.subject_code
+        name: test.subject_name
       } : null,
       answers: test.answers
     }
@@ -484,7 +460,6 @@ const getTestStats = catchAsync(async (req, res) => {
   const [subjectStats] = await db.query(`
     SELECT 
       s.name as subject_name,
-      s.code as subject_code,
       COUNT(*) as tests_taken,
       ROUND(AVG(tr.score), 2) as avg_score,
       MAX(tr.score) as highest_score
@@ -521,8 +496,7 @@ const getTestStats = catchAsync(async (req, res) => {
       },
       bySubject: subjectStats.map(stat => ({
         subject: {
-          name: stat.subject_name,
-          code: stat.subject_code
+          name: stat.subject_name
         },
         testsTaken: stat.tests_taken,
         averageScore: stat.avg_score,

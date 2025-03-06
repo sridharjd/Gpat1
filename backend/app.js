@@ -16,6 +16,7 @@ const questionRoutes = require('./routes/questionRoutes');
 const testRoutes = require('./routes/testRoutes');
 const userRoutes = require('./routes/userRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const dashboardRoutes = require('./routes/dashboardRoutes');
 
 const db = require('./config/db');
 
@@ -82,6 +83,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/tests', testRoutes);
 app.use('/api/questions', questionRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 // Handle undefined routes
 app.all('*', (req, res) => {

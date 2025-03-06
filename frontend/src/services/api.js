@@ -3,7 +3,6 @@ import axios from 'axios';
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 const DEFAULT_TIMEOUT = 15000; // 15 seconds
 const MAX_RETRIES = 3;
-const RETRY_DELAY = 1000; // 1 second
 
 // Cache for GET requests
 const cache = new Map();
@@ -16,6 +15,9 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  validateStatus: function (status) {
+    return status >= 200 && status < 500; // Accept all status codes less than 500
+  }
 });
 
 // Helper function for retrying failed requests
@@ -39,18 +41,21 @@ const retryRequest = async (error, retryCount = 0) => {
 
 // Add request interceptor to add auth token
 api.interceptors.request.use(
-  (config) => {
+  (config = {}) => {
+    // Initialize headers if not present
+    config.headers = config.headers || {};
+
+    // Ensure method is lowercase and exists
+    config.method = (config.method || 'get').toLowerCase();
+
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
-      console.log('Request headers:', config.headers);
-    } else {
-      console.warn('No token found in localStorage');
     }
 
     // Check cache for GET requests
     if (config.method === 'get' && !config.skipCache) {
-      const cacheKey = `${config.url}${JSON.stringify(config.params || {})}`;
+      const cacheKey = `${config.url || ''}${JSON.stringify(config.params || {})}`;
       const cachedResponse = cache.get(cacheKey);
       if (cachedResponse && Date.now() - cachedResponse.timestamp < CACHE_DURATION) {
         return Promise.resolve(cachedResponse.data);
@@ -68,6 +73,11 @@ api.interceptors.request.use(
 // Add response interceptor to handle errors and caching
 api.interceptors.response.use(
   (response) => {
+    // Ensure response and config exist
+    if (!response || !response.config) {
+      return response;
+    }
+
     // Cache successful GET requests
     if (response.config.method === 'get' && !response.config.skipCache) {
       const cacheKey = `${response.config.url}${JSON.stringify(response.config.params || {})}`;
@@ -85,6 +95,20 @@ api.interceptors.response.use(
       return Promise.reject({
         status: 0,
         message: 'Network error. Please check your connection.',
+        originalError: error,
+      });
+    }
+
+    // Handle 401 Unauthorized errors
+    if (error.response.status === 401) {
+      // Clear auth data and redirect to login
+      localStorage.removeItem('token');
+      localStorage.removeItem('refreshToken');
+      localStorage.removeItem('user');
+      window.location.href = '/signin';
+      return Promise.reject({
+        status: 401,
+        message: 'Session expired. Please sign in again.',
         originalError: error,
       });
     }
@@ -157,8 +181,13 @@ const apiService = {
     verifyEmail: (token) => api.get(`/api/auth/verify-email/${token}`),
     resendVerification: (data) => api.post('/api/auth/resend-verification', data),
     forgotPassword: (email) => api.post('/api/auth/forgot-password', { email }),
-    resetPassword: (resetData) => api.post('/api/auth/reset-password', resetData),
-    refreshToken: (refreshToken) => api.post('/api/auth/refresh-token', { refreshToken }),
+    resetPassword: (data) => api.post('/api/auth/reset-password', data),
+    refreshToken: (refreshToken) => api.post('/api/auth/refresh-token', { refreshToken }).catch(error => {
+      if (error.response?.status === 401) {
+        throw new Error('Invalid refresh token');
+      }
+      throw error;
+    }),
     getCurrentUser: () => api.get('/api/auth/me'),
     signOut: () => api.post('/api/auth/signout'),
   },
@@ -176,6 +205,9 @@ const apiService = {
     getById: (id) => api.get(`/api/tests/history/${id}`),
     submit: (testData) => api.post('/api/tests/submit', testData),
     getStats: () => api.get('/api/tests/stats'),
+    getFilters: () => api.get('/api/tests/filters'),
+    getQuestions: (params) => api.get('/api/tests/questions', { params }),
+    getTest: () => api.get('/api/questions/test'),
   },
 
   questions: {

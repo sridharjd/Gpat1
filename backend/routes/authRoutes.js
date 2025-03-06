@@ -9,20 +9,23 @@ const {
   signOut,
   changePassword,
   resendVerification,
-  verifyEmail
+  verifyEmail,
+  forgotPassword,
+  resetPassword
 } = require('../controllers/authController');
 
 // Public routes
 router.post('/signin', signIn);
 router.post('/signup', signUp);
-router.post('/refresh-token', refreshToken);
-router.post('/resend-verification', resendVerification);
 router.get('/verify-email/:token', verifyEmail);
+router.post('/resend-verification', resendVerification);
+router.post('/forgot-password', forgotPassword);
+router.post('/reset-password', resetPassword);
+router.post('/refresh-token', refreshToken);
 
 // Protected routes
-router.use(protect); // Apply authentication middleware to all routes below
-router.get('/me', getCurrentUser);
-router.post('/signout', signOut);
-router.post('/change-password', changePassword);
+router.get('/me', protect, getCurrentUser);
+router.post('/signout', protect, signOut);
+router.put('/change-password', protect, changePassword);
 
 module.exports = router;

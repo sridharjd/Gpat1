@@ -65,8 +65,8 @@ export const AuthProvider = ({ children }) => {
         throw new Error('No refresh token available');
       }
 
-      const response = await apiService.auth.refreshToken({ refreshToken });
-      const { token, newRefreshToken } = response.data;
+      const response = await apiService.auth.refreshToken(refreshToken);
+      const { token, refreshToken: newRefreshToken } = response.data;
       
       localStorage.setItem('token', token);
       localStorage.setItem('refreshToken', newRefreshToken);
@@ -80,49 +80,69 @@ export const AuthProvider = ({ children }) => {
     }
   }, [clearAuthData]);
 
-  const validateToken = useCallback(async () => {
+  const validateToken = async () => {
     try {
       const token = localStorage.getItem('token');
       if (!token) {
-        setIsLoading(false);
-        return;
+        setUser(null);
+        return false;
       }
 
       const response = await apiService.auth.getCurrentUser();
-      setUser(response.data.user);
-      setError(null);
+      
+      if (response?.data?.success && response?.data?.data?.user) {
+        const userData = response.data.data.user;
+        // Ensure isActive is set
+        const userToStore = {
+          ...userData,
+          isActive: userData.isActive ?? true // Default to true if not provided
+        };
+        setUser(userToStore);
+        return true;
+      } else {
+        throw new Error('Invalid response format');
+      }
     } catch (error) {
       console.error('Token validation error:', error);
-      
-      if (error.response?.status === 401) {
-        try {
-          await refreshToken();
-          const response = await apiService.auth.getCurrentUser();
-          setUser(response.data.user);
-          setError(null);
-          return;
-        } catch (refreshError) {
-          console.error('Token refresh failed:', refreshError);
-        }
-      }
-      
-      clearAuthData();
-      setError('Authentication failed. Please sign in again.');
-    } finally {
-      setIsLoading(false);
+      setUser(null);
+      return false;
     }
-  }, [clearAuthData, refreshToken]);
+  };
 
   useEffect(() => {
-    validateToken();
-  }, [validateToken]);
+    let isMounted = true;
+
+    const validate = async () => {
+      if (!isMounted) return;
+      
+      setIsLoading(true);
+      try {
+        await validateToken();
+      } catch (error) {
+        console.error('Error validating token:', error);
+        if (isMounted) {
+          setUser(null);
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    validate();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const login = async (credentials) => {
     try {
       setIsLoading(true);
       setError(null);
       const response = await apiService.auth.signIn(credentials);
-      const { token, refreshToken, user: userData } = response.data;
+      const { accessToken, refreshToken, user: userData } = response.data;
       
       // Prepare user object for storage
       const userToStore = {
@@ -130,10 +150,11 @@ export const AuthProvider = ({ children }) => {
         email: userData.email,
         isAdmin: userData.isAdmin || false,
         username: userData.username,
+        isActive: userData.isActive ?? true, // Default to true if not provided
         ...userData
       };
 
-      localStorage.setItem('token', token);
+      localStorage.setItem('token', accessToken);
       localStorage.setItem('refreshToken', refreshToken);
       localStorage.setItem('user', JSON.stringify(userToStore));
       

@@ -13,7 +13,7 @@ const getTestHistory = catchAsync(async (req, res) => {
       tr.created_at as date,
       tr.score,
       tr.total_questions,
-      tr.duration,
+      tr.time_taken,
       s.name as subject,
       CONCAT('Test ', tr.id) as name,
       CASE WHEN tr.score >= 70 THEN 'Passed' ELSE 'Failed' END as status
@@ -29,7 +29,7 @@ const getTestHistory = catchAsync(async (req, res) => {
       ...test,
       date: test.date.toISOString(),
       score: Math.round(test.score),
-      timeTaken: test.duration
+      timeTaken: test.time_taken
     }))
   });
 });
@@ -43,7 +43,7 @@ const getTestStats = catchAsync(async (req, res) => {
     SELECT 
       COUNT(*) as totalTests,
       AVG(score) as averageScore,
-      SUM(duration) as totalTime,
+      SUM(time_taken) as totalTime,
       SUM(CASE WHEN score >= 70 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as passRate
     FROM test_results
     WHERE user_id = ?
@@ -86,7 +86,7 @@ const getTestById = catchAsync(async (req, res) => {
       tr.created_at as date,
       tr.score,
       tr.total_questions,
-      tr.duration,
+      tr.time_taken,
       s.name as subject,
       CONCAT('Test ', tr.id) as name
     FROM test_results tr

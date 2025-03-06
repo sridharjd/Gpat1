@@ -12,6 +12,12 @@ const handleError = (res, error, message, statusCode = 500) => {
   res.status(statusCode).json({ message, error: error.message });
 };
 
+// Helper function to normalize answer
+const normalizeAnswer = (answer) => {
+  if (!answer) return null;
+  return String(answer).trim().toLowerCase();
+};
+
 // Get all questions with pagination and caching
 const getAllQuestions = catchAsync(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
@@ -246,7 +252,7 @@ const updateQuestion = catchAsync(async (req, res) => {
     updates.question,
     updates.subject_id,
     updates.year,
-    updates.answer.toUpperCase(),
+    normalizeAnswer(updates.answer),
     updates.option1,
     updates.option2,
     updates.option3,
@@ -256,17 +262,8 @@ const updateQuestion = catchAsync(async (req, res) => {
     id
   ]);
 
-  // Clear related caches
-  await Promise.all([
-    cache.del(`questions:${id}`),
-    cache.del('questions:all:*'),
-    cache.del('questions:filtered:*')
-  ]);
-
-  logger.info('Question updated successfully', {
-    questionId: id,
-    updatedBy: req.user.id
-  });
+  // Clear cache for this question
+  await cache.del(`questions:${id}`);
 
   res.json({
     success: true,
@@ -384,7 +381,7 @@ const updateQuestionsFromFile = catchAsync(async (req, res) => {
           row.year,
           subjectId,
           row.question,
-          row.answer.toUpperCase(),
+          normalizeAnswer(row.answer),
           row.option1,
           row.option2,
           row.option3,

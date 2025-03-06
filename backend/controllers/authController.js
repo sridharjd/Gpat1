@@ -6,7 +6,7 @@ const config = require('../config/env');
 const { validatePassword, sanitizeUser } = require('../utils/validation');
 const { generateTokens, verifyToken } = require('../utils/auth');
 const { ApiError } = require('../utils/errors');
-const { sendVerificationEmail } = require('../utils/email');
+const { sendVerificationEmail, sendPasswordResetEmail } = require('../utils/email');
 
 // Helper function to generate tokens
 const generateToken = (payload, expiresIn = '1h') => {
@@ -53,12 +53,8 @@ const signIn = async (req, res, next) => {
       throw new ApiError('Invalid email or password', 401);
     }
 
-    // Generate access token only
-    const accessToken = jwt.sign(
-      { id: user.id, email: user.email, isAdmin: user.is_admin },
-      config.jwt.secret,
-      { expiresIn: '1h' }
-    );
+    // Generate both access and refresh tokens
+    const { accessToken, refreshToken } = await generateTokens(user);
 
     // Update last login
     await db.query(
@@ -75,6 +71,7 @@ const signIn = async (req, res, next) => {
       success: true,
       accessToken,
       token: accessToken,
+      refreshToken,
       user: sanitizeUser(user)
     });
   } catch (error) {
@@ -186,6 +183,10 @@ const signUp = async (req, res, next) => {
 // Get Current User
 const getCurrentUser = async (req, res, next) => {
   try {
+    if (!req.user || !req.user.id) {
+      throw new ApiError('User not authenticated', 401);
+    }
+
     const userId = req.user.id;
     
     const [users] = await db.query(
@@ -199,8 +200,7 @@ const getCurrentUser = async (req, res, next) => {
         is_admin,
         is_verified,
         created_at, 
-        last_login,
-        avatar_url
+        last_login
       FROM users 
       WHERE id = ? AND is_active = true`,
       [userId]
@@ -233,9 +233,11 @@ const getCurrentUser = async (req, res, next) => {
 
     res.json({
       success: true,
-      user: {
-        ...sanitizeUser(users[0]),
-        stats: userStats
+      data: {
+        user: {
+          ...sanitizeUser(users[0]),
+          stats: userStats
+        }
       }
     });
   } catch (error) {
@@ -246,9 +248,42 @@ const getCurrentUser = async (req, res, next) => {
 // Refresh Token
 const refreshToken = async (req, res, next) => {
   try {
-    throw new ApiError('Refresh token functionality temporarily disabled', 501);
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      throw new ApiError('Refresh token is required', 400);
+    }
+
+    // Verify refresh token
+    const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
+    
+    // Get user
+    const [users] = await db.query(
+      'SELECT id, email, is_active FROM users WHERE id = ?',
+      [decoded.userId]
+    );
+
+    const user = users[0];
+    if (!user || !user.is_active) {
+      throw new ApiError('Invalid refresh token', 401);
+    }
+
+    // Generate new tokens
+    const { accessToken, refreshToken: newRefreshToken } = await generateTokens(user);
+
+    res.json({
+      success: true,
+      token: accessToken,
+      refreshToken: newRefreshToken
+    });
   } catch (error) {
-    next(error);
+    if (error.name === 'JsonWebTokenError') {
+      next(new ApiError('Invalid refresh token', 401));
+    } else if (error.name === 'TokenExpiredError') {
+      next(new ApiError('Refresh token has expired', 401));
+    } else {
+      next(error);
+    }
   }
 };
 
@@ -431,6 +466,131 @@ const verifyEmail = async (req, res, next) => {
   }
 };
 
+// Forgot Password
+const forgotPassword = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      throw new ApiError('Email is required', 400);
+    }
+
+    // Get user
+    const [users] = await db.query(
+      'SELECT id, email, is_active FROM users WHERE email = ?',
+      [email.toLowerCase()]
+    );
+
+    const user = users[0];
+    if (!user) {
+      // Return success even if user doesn't exist to prevent email enumeration
+      return res.json({
+        success: true,
+        message: 'If an account exists with this email, you will receive password reset instructions.'
+      });
+    }
+
+    if (!user.is_active) {
+      return res.json({
+        success: true,
+        message: 'If an account exists with this email, you will receive password reset instructions.'
+      });
+    }
+
+    // Generate reset token
+    const resetToken = jwt.sign(
+      { userId: user.id },
+      config.jwt.secret,
+      { expiresIn: config.jwt.resetPasswordExpirationMinutes }
+    );
+
+    // Update user with reset token
+    await db.query(
+      `UPDATE users 
+       SET reset_token = ?,
+           reset_token_expires_at = DATE_ADD(NOW(), INTERVAL ? MINUTE)
+       WHERE id = ?`,
+      [resetToken, parseInt(config.jwt.resetPasswordExpirationMinutes), user.id]
+    );
+
+    // Send reset email
+    await sendPasswordResetEmail(user.email, resetToken);
+
+    res.json({
+      success: true,
+      message: 'If an account exists with this email, you will receive password reset instructions.'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Reset Password
+const resetPassword = async (req, res, next) => {
+  try {
+    const { token, password } = req.body;
+
+    if (!token || !password) {
+      throw new ApiError('Reset token and new password are required', 400);
+    }
+
+    // Validate password strength
+    const passwordValidation = validatePassword(password);
+    if (!passwordValidation.isValid) {
+      throw new ApiError(passwordValidation.message, 400);
+    }
+
+    // Verify token
+    const decoded = jwt.verify(token, config.jwt.secret);
+    
+    // Get user with valid reset token
+    const [users] = await db.query(
+      `SELECT id, email, is_active 
+       FROM users 
+       WHERE id = ? 
+       AND reset_token = ? 
+       AND reset_token_expires_at > NOW()`,
+      [decoded.userId, token]
+    );
+
+    const user = users[0];
+    if (!user) {
+      throw new ApiError('Invalid or expired reset token', 400);
+    }
+
+    if (!user.is_active) {
+      throw new ApiError('Account is inactive', 400);
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(password, 12);
+
+    // Update password and clear reset token
+    await db.query(
+      `UPDATE users 
+       SET password = ?,
+           reset_token = NULL,
+           reset_token_expires_at = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [hashedPassword, user.id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Password has been reset successfully'
+    });
+  } catch (error) {
+    if (error.name === 'JsonWebTokenError') {
+      next(new ApiError('Invalid reset token', 400));
+    } else if (error.name === 'TokenExpiredError') {
+      next(new ApiError('Reset token has expired', 400));
+    } else {
+      next(error);
+    }
+  }
+};
+
 module.exports = {
   signIn,
   signUp,
@@ -439,5 +599,7 @@ module.exports = {
   signOut,
   changePassword,
   resendVerification,
-  verifyEmail
+  verifyEmail,
+  forgotPassword,
+  resetPassword
 };

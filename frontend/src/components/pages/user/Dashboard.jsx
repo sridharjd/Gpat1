@@ -42,7 +42,6 @@ import {
 import { motion } from 'framer-motion';
 import apiService from '../../../services/api';
 import { useAuth } from '../../../contexts/AuthContext';
-import MockTestSubmission from '../../test/MockTestSubmission';
 
 // Register ChartJS components
 ChartJS.register(
@@ -62,9 +61,17 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const [dashboardData, setDashboardData] = useState({
-    performance: null,
+    performance: {
+      averageScore: 0,
+      totalTests: 0,
+      highestScore: 0,
+      totalTime: 0
+    },
     recentTests: [],
-    subjectPerformance: null,
+    subjectPerformance: {
+      labels: [],
+      data: []
+    },
     recommendedTopics: [],
     upcomingTests: []
   });
@@ -108,96 +115,52 @@ const Dashboard = () => {
 
   const fetchDashboardData = useCallback(async () => {
     try {
-      // Try to fetch real data first
+      setLoading(true);
+      setError('');
+
+      // Fetch real data from the API
       const [performanceRes, testsRes, subjectsRes] = await Promise.all([
         apiService.dashboard.getPerformance(),
         apiService.dashboard.getRecentTests(),
         apiService.dashboard.getSubjectPerformance()
       ]);
 
+      if (!performanceRes?.data?.success || !testsRes?.data?.success || !subjectsRes?.data?.success) {
+        throw new Error('Invalid response format from server');
+      }
+
+      const performanceData = performanceRes?.data?.data || {};
+      const testsData = testsRes?.data?.data || [];
+      const subjectsData = subjectsRes?.data?.data || [];
+
       setDashboardData({
-        performance: performanceRes.data.success ? performanceRes.data.data : null,
-        recentTests: testsRes.data.success ? testsRes.data.data : [],
-        subjectPerformance: subjectsRes.data.success ? {
-          labels: subjectsRes.data.data.subjects || [],
-          data: subjectsRes.data.data.scores || []
-        } : null,
+        performance: {
+          averageScore: performanceData?.overall?.average_score || 0,
+          totalTests: performanceData?.overall?.total_tests || 0,
+          highestScore: performanceData?.overall?.highest_score || 0,
+          totalTime: performanceData?.overall?.total_time || 0
+        },
+        recentTests: testsData.map(test => ({
+          id: test?.id || '',
+          name: test?.subject_name ? `${test.subject_name} Test` : 'Test',
+          date: test?.created_at || new Date().toISOString(),
+          score: test?.score || 0,
+          subject: test?.subject_name || 'General'
+        })),
+        subjectPerformance: {
+          labels: subjectsData.map(subject => subject?.name || 'Unknown'),
+          data: subjectsData.map(subject => subject?.average_score || 0)
+        },
         recommendedTopics: [],
         upcomingTests: []
       });
     } catch (error) {
-      console.error('Failed to fetch real dashboard data, falling back to mock data:', error);
-      
-      // Fall back to mock data
-      const submittedTests = MockTestSubmission.getAllSubmittedTests();
-      const hasSubmittedTests = submittedTests.length > 0;
-      
-      // Calculate subject performance
-      const subjects = ['Pharmacology', 'Medicinal Chemistry', 'Pharmaceutics', 'Pharmaceutical Analysis'];
-      const subjectPerformance = {};
-      
-      subjects.forEach(subject => {
-        const subjectTests = submittedTests.filter(test => test.subject === subject);
-        subjectPerformance[subject] = subjectTests.length > 0
-          ? Math.round(subjectTests.reduce((sum, test) => sum + test.score, 0) / subjectTests.length)
-          : 0;
-      });
-
-      // Calculate overall performance
-      const averageScore = hasSubmittedTests
-        ? Math.round(submittedTests.reduce((sum, test) => sum + test.score, 0) / submittedTests.length)
-        : 0;
-
-      const highestScore = hasSubmittedTests
-        ? Math.max(...submittedTests.map(test => test.score))
-        : 0;
-
-      setDashboardData({
-        performance: {
-          averageScore,
-          totalTests: submittedTests.length,
-          highestScore,
-          totalTime: submittedTests.reduce((sum, test) => sum + test.timeTaken, 0)
-        },
-        recentTests: submittedTests
-          .sort((a, b) => new Date(b.date) - new Date(a.date))
-          .slice(0, 5)
-          .map(test => ({
-            id: test.id,
-            name: test.name,
-            date: test.date,
-            score: test.score,
-            subject: test.subject
-          })),
-        subjectPerformance: {
-          labels: subjects,
-          data: subjects.map(subject => subjectPerformance[subject])
-        },
-        recommendedTopics: [
-          'Drug Metabolism',
-          'Pharmacokinetics',
-          'Medicinal Chemistry of Antibiotics',
-          'Pharmaceutical Calculations'
-        ],
-        upcomingTests: [
-          {
-            id: 'upcoming-1',
-            name: 'Medicinal Chemistry',
-            date: new Date(Date.now() + 86400000).toLocaleDateString(),
-            duration: '60 minutes'
-          },
-          {
-            id: 'upcoming-2',
-            name: 'Pharmaceutics',
-            date: new Date(Date.now() + 172800000).toLocaleDateString(),
-            duration: '45 minutes'
-          }
-        ]
-      });
+      console.error('Failed to fetch dashboard data:', error);
+      handleApiError(error);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [handleApiError]);
 
   const handleSnackbarClose = useCallback(() => {
     setSnackbar({ ...snackbar, open: false });

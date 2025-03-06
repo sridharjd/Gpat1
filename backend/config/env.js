@@ -108,20 +108,20 @@ const envSchema = joi.object({
   JWT_VERIFY_EMAIL_EXPIRATION: joi.string()
     .default('24h'),
 
-  // Email configuration
+  // Email configuration (optional)
   SMTP_HOST: joi.string()
     .hostname()
-    .required(),
+    .optional(),
   SMTP_PORT: joi.number()
     .port()
-    .required(),
+    .optional(),
   SMTP_USERNAME: joi.string()
-    .required(),
+    .optional(),
   SMTP_PASSWORD: joi.string()
-    .required(),
+    .optional(),
   EMAIL_FROM: joi.string()
     .email()
-    .required(),
+    .optional(),
 
   // Logging configuration
   LOG_LEVEL: joi.string()
@@ -156,10 +156,10 @@ const envSchema = joi.object({
     .optional(),
   REDIS_HOST: joi.string()
     .hostname()
-    .when('REDIS_URL', { is: joi.exist(), then: joi.optional(), otherwise: joi.required() }),
+    .optional(),
   REDIS_PORT: joi.number()
     .port()
-    .when('REDIS_URL', { is: joi.exist(), then: joi.optional(), otherwise: joi.required() }),
+    .optional(),
   REDIS_PASSWORD: joi.string()
     .optional(),
 

@@ -36,6 +36,7 @@ import {
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useWebSocket } from '../../contexts/WebSocketContext';
+import { safeFirstChar } from '../../utils/stringUtils';
 
 const Navbar = () => {
   const theme = useTheme();
@@ -311,7 +312,7 @@ const Navbar = () => {
                       bgcolor: isConnected ? 'success.main' : 'error.main'
                     }}
                   >
-                    {user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || 'U'}
+                    {safeFirstChar(user?.name) || safeFirstChar(user?.email) || 'U'}
                   </Avatar>
                 </IconButton>
               </Tooltip>

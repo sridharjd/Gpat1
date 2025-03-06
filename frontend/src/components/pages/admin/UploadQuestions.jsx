@@ -37,6 +37,7 @@ import {
 } from '@mui/icons-material';
 import * as XLSX from 'xlsx';
 import apiService from '../../../services/api';
+import { safeToUpperCase } from '../../../utils/stringUtils';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const BATCH_SIZE = 100;
@@ -97,7 +98,7 @@ const UploadQuestions = () => {
       }
       
       // Validate that answer is one of the options
-      const answer = question.answer.toString().toUpperCase();
+      const answer = safeToUpperCase(question.answer);
       if (!['A', 'B', 'C', 'D'].includes(answer)) {
         errors.push(`Row ${rowNumber}: Invalid answer format. Must be A, B, C, or D for question: "${question.question?.substring(0, 30)}..."`);
       }

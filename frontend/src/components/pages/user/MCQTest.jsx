@@ -229,20 +229,26 @@ const MCQTest = () => {
       setIsSubmitting(true);
       const timeSpent = Math.floor((Date.now() - startTimeRef.current) / 1000);
       
-      const result = await apiService.tests.submit({
+      // Format the data to match backend expectations
+      const testData = {
         answers: answersRef.current,
-        timeSpent,
-        subjectId: selectedSubject,
-        year: selectedYear
-      });
+        testData: {
+          timeTaken: timeSpent,
+          subjectId: selectedSubject || null,
+          year: selectedYear || null,
+          totalQuestions: questions.length
+        }
+      };
+      
+      const result = await apiService.tests.submit(testData);
 
       // Clear saved test state
       localStorage.removeItem('testState');
 
       // Emit test completion
       emit('TEST_COMPLETED', {
-        testId: result.data.testId,
-        score: result.data.score,
+        testId: result.data.test.id,
+        score: result.data.test.score,
         timeSpent,
         totalQuestions: questions.length,
         answeredQuestions: Object.keys(answersRef.current).length
@@ -372,15 +378,19 @@ const MCQTest = () => {
                 Previous
               </Button>
               {currentIndex === questions.length - 1 ? (
-                <Button
-                  variant="contained"
-                  color="primary"
-                  endIcon={<CheckIcon />}
-                  onClick={() => setShowConfirmSubmit(true)}
-                  disabled={isSubmitting}
-                >
-                  {isSubmitting ? 'Submitting...' : 'Submit Test'}
-                </Button>
+                <Tooltip title={isSubmitting ? 'Submitting...' : 'Submit Test'}>
+                  <span>
+                    <Button
+                      variant="contained"
+                      color="primary"
+                      endIcon={<CheckIcon />}
+                      onClick={() => setShowConfirmSubmit(true)}
+                      disabled={isSubmitting}
+                    >
+                      {isSubmitting ? 'Submitting...' : 'Submit Test'}
+                    </Button>
+                  </span>
+                </Tooltip>
               ) : (
                 <Button
                   variant="contained"

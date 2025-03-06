@@ -15,7 +15,7 @@ import {
 import { useFormik } from 'formik';
 import * as Yup from 'yup';
 import { Visibility, VisibilityOff, LockOutlined } from '@mui/icons-material';
-import { useAuth } from '../../hooks/useAuth';
+import { useAuth } from '../../contexts/AuthContext';
 
 const ResetPassword = () => {
   const [error, setError] = useState('');
@@ -56,10 +56,7 @@ const ResetPassword = () => {
           return;
         }
         
-        await resetPassword({
-          token,
-          password: values.password,
-        });
+        await resetPassword(token, values.password);
         
         setSuccess('Password has been reset successfully! Redirecting to sign in...');
         setTimeout(() => {
@@ -79,29 +76,34 @@ const ResetPassword = () => {
 
   if (!token) {
     return (
-      <Container component="main" maxWidth="xs">
+      <Container component="main" maxWidth="sm">
         <Paper 
           elevation={6} 
           sx={{ 
             p: 4, 
-            mt: 8,
+            mt: 8, 
+            display: 'flex', 
+            flexDirection: 'column', 
+            alignItems: 'center',
             borderRadius: 2
           }}
         >
-          <Alert severity="error" sx={{ mb: 2 }}>
-            Invalid or missing reset token. Please request a new password reset.
-          </Alert>
+          <Typography component="h1" variant="h5" sx={{ mb: 3, fontWeight: 'bold' }}>
+            Invalid Reset Link
+          </Typography>
+
+          <Typography variant="body1" align="center" sx={{ mb: 3 }}>
+            This password reset link is invalid or has expired. Please request a new password reset link.
+          </Typography>
+
           <Button
+            component={RouterLink}
+            to="/forgot-password"
             fullWidth
             variant="contained"
-            onClick={() => navigate('/forgot-password')}
-            sx={{ 
-              py: 1.2,
-              fontWeight: 'bold',
-              borderRadius: 2
-            }}
+            sx={{ py: 1.2 }}
           >
-            Go to Forgot Password
+            Request New Reset Link
           </Button>
         </Paper>
       </Container>
@@ -109,7 +111,7 @@ const ResetPassword = () => {
   }
 
   return (
-    <Container component="main" maxWidth="xs">
+    <Container component="main" maxWidth="sm">
       <Paper 
         elevation={6} 
         sx={{ 
@@ -124,7 +126,11 @@ const ResetPassword = () => {
         <Typography component="h1" variant="h5" sx={{ mb: 3, fontWeight: 'bold' }}>
           Reset Password
         </Typography>
-        
+
+        <Typography variant="body1" align="center" sx={{ mb: 3 }}>
+          Please enter your new password below.
+        </Typography>
+
         {error && (
           <Alert severity="error" sx={{ width: '100%', mb: 2 }}>
             {error}
@@ -137,10 +143,10 @@ const ResetPassword = () => {
           </Alert>
         )}
 
-        <Box component="form" onSubmit={formik.handleSubmit} sx={{ mt: 3, width: '100%' }}>
+        <Box component="form" onSubmit={formik.handleSubmit} sx={{ width: '100%' }}>
           <TextField
             fullWidth
-            margin="normal"
+            id="password"
             name="password"
             label="New Password"
             type={showPassword ? 'text' : 'password'}
@@ -159,21 +165,20 @@ const ResetPassword = () => {
               endAdornment: (
                 <InputAdornment position="end">
                   <IconButton
-                    aria-label="toggle password visibility"
                     onClick={() => setShowPassword(!showPassword)}
                     edge="end"
-                    disabled={isLoading}
                   >
                     {showPassword ? <VisibilityOff /> : <Visibility />}
                   </IconButton>
                 </InputAdornment>
-              )
+              ),
             }}
+            sx={{ mb: 2 }}
           />
-          
+
           <TextField
             fullWidth
-            margin="normal"
+            id="confirmPassword"
             name="confirmPassword"
             label="Confirm New Password"
             type={showConfirmPassword ? 'text' : 'password'}
@@ -192,39 +197,43 @@ const ResetPassword = () => {
               endAdornment: (
                 <InputAdornment position="end">
                   <IconButton
-                    aria-label="toggle password visibility"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                     edge="end"
-                    disabled={isLoading}
                   >
                     {showConfirmPassword ? <VisibilityOff /> : <Visibility />}
                   </IconButton>
                 </InputAdornment>
-              )
+              ),
             }}
+            sx={{ mb: 2 }}
           />
 
           <Button
             type="submit"
             fullWidth
             variant="contained"
-            sx={{ 
-              mt: 3, 
-              mb: 2,
-              py: 1.2,
-              fontWeight: 'bold',
-              borderRadius: 2
-            }}
             disabled={isLoading}
+            sx={{ py: 1.2, mb: 2, fontWeight: 'bold' }}
           >
             {isLoading ? (
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
                 <CircularProgress size={24} sx={{ mr: 1 }} />
-                Resetting Password...
+                Resetting...
               </Box>
             ) : (
               'Reset Password'
             )}
+          </Button>
+
+          <Button
+            component={RouterLink}
+            to="/signin"
+            fullWidth
+            variant="outlined"
+            disabled={isLoading}
+            sx={{ py: 1.2 }}
+          >
+            Back to Sign In
           </Button>
         </Box>
       </Paper>

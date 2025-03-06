@@ -15,13 +15,15 @@ const {
   getTestStats,
   getUserStats,
   getPerformanceStats,
-  getDashboardStats
+  getDashboardStats,
+  updateUserStatus
 } = require('../controllers/adminController');
 
 // User management routes
 router.get('/users', protect, isAdmin, getUsers);
 router.get('/users/:id', protect, isAdmin, getUserById);
 router.post('/users', protect, isAdmin, createUser);
+router.patch('/users/:id/status', protect, isAdmin, updateUserStatus);
 
 // Analytics routes
 router.get('/analytics', protect, isAdmin, getAnalytics);

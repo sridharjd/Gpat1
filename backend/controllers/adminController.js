@@ -897,6 +897,49 @@ const getDashboardStats = catchAsync(async (req, res) => {
   });
 });
 
+// Update user active status
+const updateUserStatus = catchAsync(async (req, res) => {
+  const { id } = req.params;
+  const { isActive } = req.body;
+
+  if (typeof isActive !== 'boolean') {
+    throw new ApiError('isActive must be a boolean value', 400);
+  }
+
+  // Prevent deactivating self
+  if (req.user.id === parseInt(id) && !isActive) {
+    throw new ApiError('Cannot deactivate your own account', 400);
+  }
+
+  const [result] = await db.query(
+    `UPDATE users 
+     SET is_active = ?,
+         updated_at = CURRENT_TIMESTAMP,
+         updated_by = ?
+     WHERE id = ?`,
+    [isActive, req.user.id, id]
+  );
+
+  if (result.affectedRows === 0) {
+    throw new ApiError('User not found', 404);
+  }
+
+  // Clear user cache
+  await cache.del(`admin:user:${id}`);
+  await cache.del('admin:users:*');
+
+  logger.info('User status updated successfully', {
+    userId: id,
+    isActive,
+    updatedBy: req.user.id
+  });
+
+  res.json({
+    success: true,
+    message: `User ${isActive ? 'activated' : 'deactivated'} successfully`
+  });
+});
+
 module.exports = {
   getUsers,
   getUserById,
@@ -910,5 +953,6 @@ module.exports = {
   getTestStats,
   getUserStats,
   getPerformanceStats,
-  getDashboardStats
+  getDashboardStats,
+  updateUserStatus
 };

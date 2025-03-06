@@ -14,7 +14,7 @@ import {
 import { useFormik } from 'formik';
 import * as Yup from 'yup';
 import { EmailOutlined } from '@mui/icons-material';
-import { useAuth } from '../../hooks/useAuth';
+import { useAuth } from '../../contexts/AuthContext';
 
 const ForgotPassword = () => {
   const [error, setError] = useState('');
@@ -56,7 +56,7 @@ const ForgotPassword = () => {
   });
 
   return (
-    <Container component="main" maxWidth="xs">
+    <Container component="main" maxWidth="sm">
       <Paper 
         elevation={6} 
         sx={{ 
@@ -71,7 +71,11 @@ const ForgotPassword = () => {
         <Typography component="h1" variant="h5" sx={{ mb: 3, fontWeight: 'bold' }}>
           Forgot Password
         </Typography>
-        
+
+        <Typography variant="body1" align="center" sx={{ mb: 3 }}>
+          Enter your email address and we'll send you instructions to reset your password.
+        </Typography>
+
         {error && (
           <Alert severity="error" sx={{ width: '100%', mb: 2 }}>
             {error}
@@ -84,13 +88,12 @@ const ForgotPassword = () => {
           </Alert>
         )}
 
-        <Box component="form" onSubmit={formik.handleSubmit} sx={{ mt: 3, width: '100%' }}>
+        <Box component="form" onSubmit={formik.handleSubmit} sx={{ width: '100%' }}>
           <TextField
             fullWidth
-            margin="normal"
+            id="email"
             name="email"
             label="Email Address"
-            type="email"
             value={formik.values.email}
             onChange={formik.handleChange}
             onBlur={formik.handleBlur}
@@ -104,25 +107,20 @@ const ForgotPassword = () => {
                 </InputAdornment>
               ),
             }}
+            sx={{ mb: 2 }}
           />
 
           <Button
             type="submit"
             fullWidth
             variant="contained"
-            sx={{ 
-              mt: 3, 
-              mb: 2,
-              py: 1.2,
-              fontWeight: 'bold',
-              borderRadius: 2
-            }}
             disabled={isLoading}
+            sx={{ py: 1.2, mb: 2, fontWeight: 'bold' }}
           >
             {isLoading ? (
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
                 <CircularProgress size={24} sx={{ mr: 1 }} />
-                Sending Instructions...
+                Sending...
               </Box>
             ) : (
               'Send Reset Instructions'
@@ -130,12 +128,12 @@ const ForgotPassword = () => {
           </Button>
 
           <Button
-            fullWidth
-            variant="text"
             component={RouterLink}
             to="/signin"
+            fullWidth
+            variant="outlined"
             disabled={isLoading}
-            sx={{ textTransform: 'none' }}
+            sx={{ py: 1.2 }}
           >
             Back to Sign In
           </Button>

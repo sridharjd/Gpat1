@@ -34,6 +34,7 @@ import {
 } from '@mui/icons-material';
 import * as XLSX from 'xlsx';
 import apiService from '../../../services/api';
+import { safeCapitalize } from '../../../utils/stringUtils';
 
 ChartJS.register(
   CategoryScale,
@@ -77,8 +78,8 @@ const Reports = () => {
 
         // Summary Sheet
         const summaryData = [
-          ['Report Type', reportType.charAt(0).toUpperCase() + reportType.slice(1)],
-          ['Time Range', timeRange.charAt(0).toUpperCase() + timeRange.slice(1)],
+          ['Report Type', safeCapitalize(reportType)],
+          ['Time Range', safeCapitalize(timeRange)],
           ['Generated Date', new Date().toLocaleString()],
           []
         ];

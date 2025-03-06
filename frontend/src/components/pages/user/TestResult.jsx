@@ -36,7 +36,7 @@ import {
 import * as XLSX from 'xlsx';
 import { motion } from 'framer-motion';
 import { useAuth } from '../../../contexts/AuthContext';
-import MockTestSubmission from '../../test/MockTestSubmission';
+import apiService from '../../../services/api';
 
 const MotionPaper = motion(Paper);
 const MotionCard = motion(Card);
@@ -48,149 +48,113 @@ const TestResult = () => {
   const { resultId } = useParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [result, setResult] = useState(null);
+  const [testResult, setTestResult] = useState(null);
+  const { user, logout } = useAuth();
 
   useEffect(() => {
     const fetchResult = async () => {
       try {
         setLoading(true);
-        let testResult;
+        setError(null);
 
-        if (location.state?.result) {
-          // Regular test result passed through navigation
-          testResult = location.state.result;
-        } else if (resultId) {
-          // Try to fetch mock test result
-          const mockTest = MockTestSubmission.getTestById(resultId);
-          if (mockTest) {
-            testResult = {
-              id: mockTest.id,
-              score: mockTest.score,
-              totalQuestions: mockTest.totalQuestions,
-              correctAnswers: mockTest.correctAnswers,
-              incorrectAnswers: mockTest.totalQuestions - mockTest.correctAnswers,
-              timeSpent: mockTest.timeTaken,
-              questions: mockTest.questions,
-              date: mockTest.date,
-              isMockTest: true
-            };
-          } else {
-            throw new Error('Test result not found');
-          }
-        } else {
-          throw new Error('No result data available');
+        const response = await apiService.tests.getById(resultId);
+        
+        if (!response?.data?.success) {
+          throw new Error('Failed to fetch test result');
         }
 
-        setResult(testResult);
-      } catch (error) {
-        console.error('Error fetching test result:', error);
-        setError(error.message);
+        setTestResult(response.data.data);
+      } catch (err) {
+        console.error('Error fetching test result:', err);
+        setError(err.message || 'Failed to load test result');
       } finally {
         setLoading(false);
       }
     };
 
-    fetchResult();
-  }, [location.state, resultId]);
+    if (resultId) {
+      fetchResult();
+    }
+  }, [resultId]);
 
   const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}m ${secs}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
 
   const calculatePercentage = (value, total) => {
-    return ((value / total) * 100).toFixed(1);
+    if (!total) return 0;
+    return Math.round((value / total) * 100);
   };
 
-  // Calculate subject-wise analysis
-  const subjectWiseAnalysis = result?.questions ? Object.values(result.questions.reduce((acc, q) => {
-    const subject = q.subject_name;
-    if (!acc[subject]) {
-      acc[subject] = {
-        name: subject,
-        correct: 0,
-        total: 0,
-        score: 0
-      };
-    }
-    acc[subject].total += 1;
-    if (q.isCorrect) {
-      acc[subject].correct += 1;
-    }
-    acc[subject].score = calculatePercentage(acc[subject].correct, acc[subject].total);
-    return acc;
-  }, {})) : [];
-
   const exportToExcel = () => {
+    if (!testResult) return;
+
     const data = [
-      ['Test Results Summary'],
-      ['Test Type', result.isMockTest ? 'Mock Test' : 'Regular Test'],
-      ['Date', new Date(result.date).toLocaleString()],
-      ['Score', `${result.score}%`],
-      ['Total Questions', result.totalQuestions],
-      ['Correct Answers', result.correctAnswers],
-      ['Incorrect Answers', result.incorrectAnswers],
-      ['Time Spent', formatTime(result.timeSpent)],
+      ['Test Result Summary'],
+      ['Subject', testResult.subject_name],
+      ['Date', new Date(testResult.created_at).toLocaleDateString()],
+      ['Score', `${testResult.score}%`],
+      ['Time Taken', formatTime(testResult.time_taken)],
+      ['Total Questions', testResult.total_questions],
+      ['Correct Answers', testResult.correct_answers],
+      ['Incorrect Answers', testResult.total_questions - testResult.correct_answers],
+      ['Accuracy', `${calculatePercentage(testResult.correct_answers, testResult.total_questions)}%`],
       [],
-      ['Question-wise Analysis'],
-      ['Question', 'Subject', 'Your Answer', 'Correct Answer', 'Status']
+      ['Question Details'],
+      ['Question', 'Your Answer', 'Correct Answer', 'Status']
     ];
 
-    // Add question-wise data
-    if (result.questions) {
-      result.questions.forEach((q, index) => {
-        data.push([
-          q.question_text,
-          q.subject_name,
-          q.userAnswer || 'Not Attempted',
-          q.correct_answer,
-          q.isCorrect ? 'Correct' : 'Incorrect'
-        ]);
-      });
+    // Add question details
+    testResult.questions?.forEach((q, index) => {
+      data.push([
+        `Question ${index + 1}`,
+        q.selected_answer || 'Not answered',
+        q.correct_answer,
+        q.is_correct ? 'Correct' : 'Incorrect'
+      ]);
+    });
 
-      // Add subject-wise analysis
-      data.push([]);
-      data.push(['Subject-wise Analysis']);
-      data.push(['Subject', 'Score', 'Correct', 'Total']);
-      subjectWiseAnalysis.forEach(subject => {
-        data.push([
-          subject.name,
-          `${subject.score}%`,
-          subject.correct,
-          subject.total
-        ]);
-      });
-    }
-
-    // Create a worksheet and workbook
-    const worksheet = XLSX.utils.aoa_to_sheet(data);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Results');
-
-    // Export to Excel
-    XLSX.writeFile(workbook, `TestResults_${new Date().toISOString().split('T')[0]}.xlsx`);
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Test Result');
+    XLSX.writeFile(wb, `Test_Result_${resultId}.xlsx`);
   };
 
   if (loading) {
     return (
-      <Container maxWidth="md" sx={{ py: 4, textAlign: 'center' }}>
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
         <CircularProgress />
-        <Typography variant="h6" sx={{ mt: 2 }}>Loading test results...</Typography>
-      </Container>
+      </Box>
     );
   }
 
   if (error) {
     return (
-      <Container maxWidth="md" sx={{ py: 4 }}>
-        <Alert severity="error">{error}</Alert>
-        <Button 
-          startIcon={<ArrowBackIcon />} 
-          onClick={() => navigate('/dashboard')}
-          sx={{ mt: 2 }}
+      <Container maxWidth="lg" sx={{ py: 4 }}>
+        <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>
+        <Button
+          variant="contained"
+          onClick={() => navigate('/test-history')}
+          startIcon={<ArrowBackIcon />}
         >
-          Back to Dashboard
+          Back to Test History
+        </Button>
+      </Container>
+    );
+  }
+
+  if (!testResult) {
+    return (
+      <Container maxWidth="lg" sx={{ py: 4 }}>
+        <Alert severity="warning" sx={{ mb: 2 }}>Test result not found</Alert>
+        <Button
+          variant="contained"
+          onClick={() => navigate('/test-history')}
+          startIcon={<ArrowBackIcon />}
+        >
+          Back to Test History
         </Button>
       </Container>
     );
@@ -228,7 +192,7 @@ const TestResult = () => {
       >
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
           <Typography variant="h4">
-            {result.isMockTest ? 'Mock Test Result' : 'Test Result'}
+            {testResult.isMockTest ? 'Mock Test Result' : 'Test Result'}
           </Typography>
           <Button
             variant="contained"
@@ -249,7 +213,7 @@ const TestResult = () => {
               <CardContent sx={{ textAlign: 'center' }}>
                 <ScoreIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
                 <Typography variant="h6">Score</Typography>
-                <Typography variant="h4" color="primary">{result.score}%</Typography>
+                <Typography variant="h4" color="primary">{testResult.score}%</Typography>
               </CardContent>
             </MotionCard>
           </Grid>
@@ -262,7 +226,7 @@ const TestResult = () => {
               <CardContent sx={{ textAlign: 'center' }}>
                 <AssessmentIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
                 <Typography variant="h6">Questions</Typography>
-                <Typography variant="h4">{result.totalQuestions}</Typography>
+                <Typography variant="h4">{testResult.total_questions}</Typography>
               </CardContent>
             </MotionCard>
           </Grid>
@@ -275,7 +239,7 @@ const TestResult = () => {
               <CardContent sx={{ textAlign: 'center' }}>
                 <CorrectIcon color="success" sx={{ fontSize: 40, mb: 1 }} />
                 <Typography variant="h6">Correct</Typography>
-                <Typography variant="h4" color="success.main">{result.correctAnswers}</Typography>
+                <Typography variant="h4" color="success.main">{testResult.correct_answers}</Typography>
               </CardContent>
             </MotionCard>
           </Grid>
@@ -288,18 +252,18 @@ const TestResult = () => {
               <CardContent sx={{ textAlign: 'center' }}>
                 <TimerIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
                 <Typography variant="h6">Time Spent</Typography>
-                <Typography variant="h4">{formatTime(result.timeSpent)}</Typography>
+                <Typography variant="h4">{formatTime(testResult.time_taken)}</Typography>
               </CardContent>
             </MotionCard>
           </Grid>
         </Grid>
 
-        {result.questions && (
+        {testResult.questions && (
           <>
             <Typography variant="h5" sx={{ mt: 6, mb: 3 }}>Subject-wise Analysis</Typography>
             <Grid container spacing={3}>
-              {subjectWiseAnalysis.map((subject, index) => (
-                <Grid item xs={12} sm={6} md={4} key={subject.name}>
+              {testResult.questions.map((question, index) => (
+                <Grid item xs={12} sm={6} md={4} key={question.id}>
                   <MotionCard
                     variants={itemVariants}
                     whileHover={{ scale: 1.02, boxShadow: theme.shadows[4] }}
@@ -307,25 +271,26 @@ const TestResult = () => {
                     <CardContent>
                       <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                         <SubjectIcon color="primary" sx={{ mr: 1 }} />
-                        <Typography variant="h6">{subject.name}</Typography>
+                        <Typography variant="h6">{question.question_text}</Typography>
                       </Box>
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                        <Typography color="text.secondary">Score:</Typography>
+                        <Typography color="text.secondary">Your Answer:</Typography>
                         <Typography color="primary" fontWeight="bold">
-                          {subject.score}%
+                          {question.selected_answer || 'Not answered'}
                         </Typography>
                       </Box>
                       <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <Typography color="text.secondary">Correct/Total:</Typography>
-                        <Typography>
-                          {subject.correct}/{subject.total}
+                        <Typography color="text.secondary">Correct Answer:</Typography>
+                        <Typography color="primary" fontWeight="bold">
+                          {question.correct_answer}
                         </Typography>
                       </Box>
-                      <LinearProgress
-                        variant="determinate"
-                        value={parseFloat(subject.score)}
-                        sx={{ mt: 2, height: 8, borderRadius: 4 }}
-                      />
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <Typography color="text.secondary">Status:</Typography>
+                        <Typography color={question.is_correct ? "success" : "error"} fontWeight="bold">
+                          {question.is_correct ? 'Correct' : 'Incorrect'}
+                        </Typography>
+                      </Box>
                     </CardContent>
                   </MotionCard>
                 </Grid>

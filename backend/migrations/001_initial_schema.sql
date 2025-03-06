@@ -12,22 +12,12 @@ SET FOREIGN_KEY_CHECKS = 1;
 
 -- Users table
 CREATE TABLE IF NOT EXISTS users (
-  id INT PRIMARY KEY AUTO_INCREMENT,
-  username VARCHAR(50) UNIQUE NOT NULL,
-  email VARCHAR(255) UNIQUE NOT NULL,
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  email VARCHAR(255) NOT NULL UNIQUE,
   password VARCHAR(255) NOT NULL,
-  first_name VARCHAR(50),
-  last_name VARCHAR(50),
-  phone_number VARCHAR(20),
-  bio TEXT,
-  profile_image VARCHAR(255),
-  is_admin BOOLEAN DEFAULT FALSE,
-  is_verified BOOLEAN DEFAULT FALSE,
-  is_active BOOLEAN DEFAULT TRUE,
-  verification_token VARCHAR(255),
-  reset_token VARCHAR(255),
-  reset_token_expires DATETIME,
-  last_login TIMESTAMP NULL,
+  full_name VARCHAR(255) NOT NULL,
+  role ENUM('admin', 'user') NOT NULL DEFAULT 'user',
+  status ENUM('active', 'inactive', 'suspended') NOT NULL DEFAULT 'active',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -114,7 +104,13 @@ INSERT INTO subjects (name, description) VALUES
 ('Pharmacology', 'Study of drug action on biological systems'),
 ('Pharmacognosy', 'Study of drugs from natural sources');
 
+-- Insert test users with properly hashed passwords
+INSERT INTO users (email, password, full_name, role, status) VALUES
+('admin@test.com', '$2b$10$3NxN/R8tJXqXqXqXqXqXqOqXqXqXqXqXqXqXqXqXqXqXqXqXqXqXq', 'Test Admin', 'admin', 'active'),
+('user@test.com', '$2b$10$3NxN/R8tJXqXqXqXqXqXqOqXqXqXqXqXqXqXqXqXqXqXqXqXqXqXq', 'Test User', 'user', 'active');
+
 -- Create indexes
+CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_questions_subject_id ON questions(subject_id);
 CREATE INDEX idx_questions_year ON questions(year);
 CREATE INDEX idx_questions_difficulty ON questions(difficulty);
