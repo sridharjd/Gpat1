@@ -44,8 +44,8 @@ const getInitialAuthState = () => {
 };
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(getInitialAuthState);
-  const [isLoading, setIsLoading] = useState(true);
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isTokenRefreshing, setIsTokenRefreshing] = useState(false);
 
@@ -110,68 +110,54 @@ export const AuthProvider = ({ children }) => {
   };
 
   useEffect(() => {
-    let isMounted = true;
+    checkAuth();
+  }, []);
 
-    const validate = async () => {
-      if (!isMounted) return;
-      
-      setIsLoading(true);
-      try {
-        await validateToken();
-      } catch (error) {
-        console.error('Error validating token:', error);
-        if (isMounted) {
-          setUser(null);
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
+  const checkAuth = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      if (token) {
+        const response = await apiService.auth.getProfile();
+        if (response?.data?.success) {
+          setUser(response.data.data);
+        } else {
+          localStorage.removeItem('token');
         }
       }
-    };
-
-    validate();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+    } catch (err) {
+      console.error('Auth check failed:', err);
+      localStorage.removeItem('token');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const login = async (credentials) => {
     try {
-      setIsLoading(true);
+      setLoading(true);
       setError(null);
-      const response = await apiService.auth.signIn(credentials);
-      const { accessToken, refreshToken, user: userData } = response.data;
+      const response = await apiService.auth.login(credentials);
       
-      // Prepare user object for storage
-      const userToStore = {
-        id: userData.id,
-        email: userData.email,
-        isAdmin: userData.isAdmin || false,
-        username: userData.username,
-        isActive: userData.isActive ?? true, // Default to true if not provided
-        ...userData
-      };
-
-      localStorage.setItem('token', accessToken);
-      localStorage.setItem('refreshToken', refreshToken);
-      localStorage.setItem('user', JSON.stringify(userToStore));
-      
-      setUser(userToStore);
-      return userToStore;
-    } catch (error) {
-      const errorMessage = error.response?.data?.message || 'Login failed. Please try again.';
-      setError(errorMessage);
-      throw new Error(errorMessage);
+      if (response?.data?.success) {
+        const { token, user: userData } = response.data;
+        localStorage.setItem('token', token);
+        setUser(userData);
+        return true;
+      } else {
+        throw new Error(response?.data?.message || 'Login failed');
+      }
+    } catch (err) {
+      console.error('Login error:', err);
+      setError(err.response?.data?.message || err.message || 'Login failed');
+      return false;
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
   const register = async (userData) => {
     try {
-      setIsLoading(true);
+      setLoading(true);
       setError(null);
       const response = await apiService.auth.register(userData);
       const { token, refreshToken, user: newUser } = response.data;
@@ -187,19 +173,19 @@ export const AuthProvider = ({ children }) => {
       setError(errorMessage);
       throw new Error(errorMessage);
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
   const logout = async () => {
     try {
-      setIsLoading(true);
-      await apiService.auth.signOut();
+      setLoading(true);
+      await apiService.auth.logout();
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
       clearAuthData();
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
@@ -213,7 +199,7 @@ export const AuthProvider = ({ children }) => {
 
   const forgotPassword = async (email) => {
     try {
-      setIsLoading(true);
+      setLoading(true);
       setError(null);
       await apiService.auth.forgotPassword(email);
       return { success: true };
@@ -222,13 +208,13 @@ export const AuthProvider = ({ children }) => {
       setError(errorMessage);
       throw new Error(errorMessage);
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
   const resetPassword = async (token, newPassword) => {
     try {
-      setIsLoading(true);
+      setLoading(true);
       setError(null);
       await apiService.auth.resetPassword({ token, newPassword });
       return { success: true };
@@ -237,13 +223,13 @@ export const AuthProvider = ({ children }) => {
       setError(errorMessage);
       throw new Error(errorMessage);
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
   const verifyEmail = async (token) => {
     try {
-      setIsLoading(true);
+      setLoading(true);
       setError(null);
       await apiService.auth.verifyEmail(token);
       return { success: true };
@@ -252,7 +238,7 @@ export const AuthProvider = ({ children }) => {
       setError(errorMessage);
       throw new Error(errorMessage);
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
@@ -261,7 +247,7 @@ export const AuthProvider = ({ children }) => {
       value={{
         user,
         isAuthenticated: !!user,
-        isLoading,
+        isLoading: loading,
         isAdmin: user?.isAdmin,
         error,
         isTokenRefreshing,

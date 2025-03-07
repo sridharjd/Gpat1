@@ -1,5 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
 import {
   Container,
   Grid,
@@ -8,455 +7,203 @@ import {
   Box,
   CircularProgress,
   Alert,
-  Button,
   Card,
   CardContent,
-  CardActions,
-  Divider,
   List,
   ListItem,
   ListItemText,
-  ListItemIcon,
-  Snackbar,
-  useTheme
+  Divider
 } from '@mui/material';
-import {
-  PlayArrow as StartIcon,
-  History as HistoryIcon,
-  TrendingUp as TrendingUpIcon,
-  Assessment as AssessmentIcon,
-  CheckCircle as CheckCircleIcon,
-  School as SchoolIcon,
-  Timer as TimerIcon
-} from '@mui/icons-material';
-import { Bar } from 'react-chartjs-2';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-} from 'chart.js';
 import { motion } from 'framer-motion';
-import apiService from '../../../services/api';
 import { useAuth } from '../../../contexts/AuthContext';
+import apiService from '../../../services/api';
 
-// Register ChartJS components
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend
-);
-
-const MotionCard = motion(Card);
 const MotionPaper = motion(Paper);
 
 const Dashboard = () => {
-  const theme = useTheme();
-  const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [dashboardData, setDashboardData] = useState({
     performance: {
       averageScore: 0,
       totalTests: 0,
-      highestScore: 0,
-      totalTime: 0
+      completedTests: 0
     },
     recentTests: [],
-    subjectPerformance: {
-      labels: [],
-      data: []
-    },
-    recommendedTopics: [],
-    upcomingTests: []
+    performanceHistory: []
   });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
-
-  const handleNavigation = useCallback((path) => {
-    try {
-      navigate(path);
-    } catch (error) {
-      console.error('Navigation error:', error);
-      setSnackbar({
-        open: true,
-        message: 'Navigation failed. Please try again.',
-        severity: 'error',
-      });
-    }
-  }, [navigate]);
-
-  const handleApiError = useCallback((error) => {
-    console.error('API Error:', error);
-    if (error.response) {
-      if (error.response.status === 401) {
-        setSnackbar({
-          open: true,
-          message: 'Session expired. Please sign in again.',
-          severity: 'error',
-        });
-        logout();
-        navigate('/signin');
-        return;
-      }
-      setError('Failed to fetch dashboard data. Please try again later.');
-    } else if (error.request) {
-      setError('Network error. Please check your connection.');
-    } else {
-      setError('An unexpected error occurred.');
-    }
-  }, [logout, navigate]);
-
-  const fetchDashboardData = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError('');
-
-      // Fetch real data from the API
-      const [performanceRes, testsRes, subjectsRes] = await Promise.all([
-        apiService.dashboard.getPerformance(),
-        apiService.dashboard.getRecentTests(),
-        apiService.dashboard.getSubjectPerformance()
-      ]);
-
-      if (!performanceRes?.data?.success || !testsRes?.data?.success || !subjectsRes?.data?.success) {
-        throw new Error('Invalid response format from server');
-      }
-
-      const performanceData = performanceRes?.data?.data || {};
-      const testsData = testsRes?.data?.data || [];
-      const subjectsData = subjectsRes?.data?.data || [];
-
-      setDashboardData({
-        performance: {
-          averageScore: performanceData?.overall?.average_score || 0,
-          totalTests: performanceData?.overall?.total_tests || 0,
-          highestScore: performanceData?.overall?.highest_score || 0,
-          totalTime: performanceData?.overall?.total_time || 0
-        },
-        recentTests: testsData.map(test => ({
-          id: test?.id || '',
-          name: test?.subject_name ? `${test.subject_name} Test` : 'Test',
-          date: test?.created_at || new Date().toISOString(),
-          score: test?.score || 0,
-          subject: test?.subject_name || 'General'
-        })),
-        subjectPerformance: {
-          labels: subjectsData.map(subject => subject?.name || 'Unknown'),
-          data: subjectsData.map(subject => subject?.average_score || 0)
-        },
-        recommendedTopics: [],
-        upcomingTests: []
-      });
-    } catch (error) {
-      console.error('Failed to fetch dashboard data:', error);
-      handleApiError(error);
-    } finally {
-      setLoading(false);
-    }
-  }, [handleApiError]);
-
-  const handleSnackbarClose = useCallback(() => {
-    setSnackbar({ ...snackbar, open: false });
-  }, [snackbar]);
 
   useEffect(() => {
-    fetchDashboardData();
-  }, [fetchDashboardData]);
+    const fetchDashboardData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
 
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        position: 'top',
-      },
-      title: {
-        display: true,
-        text: 'Performance by Subject',
-      },
-    },
-    scales: {
-      y: {
-        beginAtZero: true,
-        max: 100,
-        title: {
-          display: true,
-          text: 'Score (%)'
+        const [performanceRes, testHistoryRes] = await Promise.all([
+          apiService.user.getPerformance(),
+          apiService.user.getTestHistory()
+        ]);
+
+        if (!performanceRes?.data?.success) {
+          throw new Error('Failed to fetch performance data');
         }
-      }
-    }
-  };
 
-  const containerVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: {
-      opacity: 1,
-      y: 0,
-      transition: {
-        duration: 0.5,
-        staggerChildren: 0.1
-      }
-    }
-  };
+        if (!testHistoryRes?.data?.success) {
+          throw new Error('Failed to fetch test history');
+        }
 
-  const itemVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: {
-      opacity: 1,
-      y: 0,
-      transition: { duration: 0.5 }
-    }
-  };
+        const performanceData = performanceRes.data.data.overall || {
+          totalTests: 0,
+          completedTests: 0,
+          averageScore: 0,
+          averageTime: 0
+        };
+
+        setDashboardData({
+          performance: {
+            averageScore: performanceData.averageScore || 0,
+            totalTests: performanceData.totalTests || 0,
+            completedTests: performanceData.completedTests || 0
+          },
+          recentTests: testHistoryRes.data.data || [],
+          performanceHistory: performanceRes.data.data.categories || []
+        });
+      } catch (err) {
+        console.error('Failed to fetch dashboard data:', err);
+        setError(err.message || 'Failed to load dashboard data');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchDashboardData();
+  }, []);
 
   if (loading) {
     return (
-      <Container maxWidth="lg" sx={{ py: 4, textAlign: 'center' }}>
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
         <CircularProgress />
-        <Typography variant="h6" sx={{ mt: 2 }}>Loading dashboard...</Typography>
-      </Container>
+      </Box>
     );
   }
 
   if (error) {
     return (
       <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>
-        <Button
-          variant="contained"
-          onClick={fetchDashboardData}
-          startIcon={<AssessmentIcon />}
-        >
-          Retry
-        </Button>
+        <Alert severity="error">{error}</Alert>
       </Container>
     );
   }
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
-      <motion.div
-        variants={containerVariants}
-        initial="hidden"
-        animate="visible"
+      <MotionPaper
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
       >
-        <Typography variant="h4" gutterBottom>
-          Welcome, {user?.name || 'User'}!
-        </Typography>
+        <Box sx={{ p: 3 }}>
+          <Typography variant="h4" gutterBottom>
+            Welcome, {user?.first_name || user?.name || 'User'}
+          </Typography>
 
-        <Grid container spacing={4}>
-          {/* Performance Stats */}
-          <Grid item xs={12} md={4}>
-            <MotionCard
-              variants={itemVariants}
-              whileHover={{ scale: 1.02, boxShadow: theme.shadows[8] }}
-            >
-              <CardContent>
-                <Box sx={{ textAlign: 'center', mb: 2 }}>
-                  <AssessmentIcon color="primary" sx={{ fontSize: 40 }} />
-                  <Typography variant="h6" gutterBottom>Overall Performance</Typography>
-                  <Typography variant="h3" color="primary">
-                    {dashboardData.performance?.averageScore.toFixed(1)}%
+          <Grid container spacing={3}>
+            {/* Performance Overview */}
+            <Grid item xs={12} md={4}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    Performance Overview
                   </Typography>
-                </Box>
-                <List>
-                  <ListItem>
-                    <ListItemIcon>
-                      <CheckCircleIcon color="success" />
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="Total Tests"
-                      secondary={dashboardData.performance?.totalTests || 0}
-                    />
-                  </ListItem>
-                  <ListItem>
-                    <ListItemIcon>
-                      <TrendingUpIcon color="primary" />
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="Highest Score"
-                      secondary={`${dashboardData.performance?.highestScore.toFixed(1)}%`}
-                    />
-                  </ListItem>
-                  <ListItem>
-                    <ListItemIcon>
-                      <TimerIcon color="info" />
-                    </ListItemIcon>
-                    <ListItemText
-                      primary="Total Time"
-                      secondary={`${Math.floor(dashboardData.performance?.totalTime / 60)}h ${dashboardData.performance?.totalTime % 60}m`}
-                    />
-                  </ListItem>
-                </List>
-              </CardContent>
-              <Divider />
-              <CardActions>
-                <Button
-                  fullWidth
-                  variant="contained"
-                  onClick={() => handleNavigation('/test')}
-                  startIcon={<StartIcon />}
-                  sx={{ borderRadius: 2 }}
-                >
-                  Start New Test
-                </Button>
-              </CardActions>
-            </MotionCard>
-          </Grid>
-
-          {/* Subject Performance */}
-          <Grid item xs={12} md={8}>
-            <MotionCard
-              variants={itemVariants}
-              whileHover={{ scale: 1.02, boxShadow: theme.shadows[8] }}
-            >
-              <CardContent>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                  <Typography variant="h6">Performance by Subject</Typography>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={() => handleNavigation('/performance')}
-                    startIcon={<AssessmentIcon />}
-                    sx={{ borderRadius: 2 }}
-                  >
-                    Full Report
-                  </Button>
-                </Box>
-                <Box sx={{ height: 300 }}>
-                  {dashboardData.subjectPerformance?.labels.length > 0 ? (
-                    <Bar
-                      options={chartOptions}
-                      data={{
-                        labels: dashboardData.subjectPerformance.labels,
-                        datasets: [{
-                          label: 'Average Score (%)',
-                          data: dashboardData.subjectPerformance.data,
-                          backgroundColor: theme.palette.primary.light,
-                          borderColor: theme.palette.primary.main,
-                          borderWidth: 1
-                        }]
-                      }}
-                    />
-                  ) : (
-                    <Box sx={{ textAlign: 'center', py: 4 }}>
-                      <SchoolIcon sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
-                      <Typography variant="h6" color="text.secondary">
-                        No test data available yet
+                  {dashboardData.performance && (
+                    <>
+                      <Typography variant="h3" color="primary">
+                        {dashboardData.performance.averageScore.toFixed(2)}%
                       </Typography>
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                        Take your first test to see your performance
+                      <Typography color="text.secondary">
+                        Average Score
                       </Typography>
-                      <Button
-                        variant="contained"
-                        onClick={() => handleNavigation('/test')}
-                        startIcon={<StartIcon />}
-                        sx={{ borderRadius: 2 }}
-                      >
-                        Start a Test
-                      </Button>
-                    </Box>
-                  )}
-                </Box>
-              </CardContent>
-            </MotionCard>
-          </Grid>
-
-          {/* Recent Tests */}
-          <Grid item xs={12} md={6}>
-            <MotionCard
-              variants={itemVariants}
-              whileHover={{ scale: 1.02, boxShadow: theme.shadows[8] }}
-            >
-              <CardContent>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                  <Typography variant="h6">Recent Tests</Typography>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={() => handleNavigation('/test-history')}
-                    startIcon={<HistoryIcon />}
-                    sx={{ borderRadius: 2 }}
-                  >
-                    View All
-                  </Button>
-                </Box>
-                {dashboardData.recentTests.length > 0 ? (
-                  <List>
-                    {dashboardData.recentTests.map((test) => (
-                      <ListItem key={test.id} divider>
-                        <ListItemText
-                          primary={test.name}
-                          secondary={`${test.subject} • ${new Date(test.date).toLocaleDateString()}`}
-                        />
-                        <Typography
-                          variant="body2"
-                          color={test.score >= 70 ? 'success.main' : 'error.main'}
-                          sx={{ fontWeight: 'bold' }}
-                        >
-                          {test.score}%
+                      <Box sx={{ mt: 2 }}>
+                        <Typography variant="body2">
+                          Total Tests: {dashboardData.performance.totalTests}
                         </Typography>
-                      </ListItem>
+                        <Typography variant="body2">
+                          Tests Completed: {dashboardData.performance.completedTests}
+                        </Typography>
+                      </Box>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            </Grid>
+
+            {/* Recent Tests */}
+            <Grid item xs={12} md={8}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    Recent Tests
+                  </Typography>
+                  <List>
+                    {dashboardData.recentTests.map((test, index) => (
+                      <React.Fragment key={test.id}>
+                        <ListItem>
+                          <ListItemText
+                            primary={test.subject_name || `Test ${test.id}`}
+                            secondary={
+                              <>
+                                <Typography component="span" variant="body2">
+                                  Score: {typeof test.score === 'number' ? test.score.toFixed(2) : '0.00'}%
+                                </Typography>
+                                <br />
+                                <Typography component="span" variant="body2">
+                                  Date: {new Date(test.created_at).toLocaleDateString()}
+                                </Typography>
+                              </>
+                            }
+                          />
+                        </ListItem>
+                        {index < dashboardData.recentTests.length - 1 && <Divider />}
+                      </React.Fragment>
                     ))}
                   </List>
-                ) : (
-                  <Typography color="text.secondary" align="center" sx={{ py: 4 }}>
-                    No tests taken yet
+                </CardContent>
+              </Card>
+            </Grid>
+
+            {/* Subject Performance */}
+            <Grid item xs={12}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    Subject Performance
                   </Typography>
-                )}
-              </CardContent>
-            </MotionCard>
+                  <Grid container spacing={2}>
+                    {dashboardData.performanceHistory.map((subject) => (
+                      <Grid item xs={12} sm={6} md={4} key={subject.category}>
+                        <Paper sx={{ p: 2 }}>
+                          <Typography variant="subtitle1">
+                            {subject.category}
+                          </Typography>
+                          <Typography variant="h6" color="primary">
+                            {typeof subject.averageScore === 'number' ? subject.averageScore.toFixed(2) : '0.00'}%
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            {subject.completedTests} tests completed
+                          </Typography>
+                        </Paper>
+                      </Grid>
+                    ))}
+                  </Grid>
+                </CardContent>
+              </Card>
+            </Grid>
           </Grid>
-
-          {/* Recommended Topics */}
-          <Grid item xs={12} md={6}>
-            <MotionCard
-              variants={itemVariants}
-              whileHover={{ scale: 1.02, boxShadow: theme.shadows[8] }}
-            >
-              <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  Recommended Topics
-                </Typography>
-                <List>
-                  {dashboardData.recommendedTopics.map((topic, index) => (
-                    <ListItem key={index} divider={index < dashboardData.recommendedTopics.length - 1}>
-                      <ListItemIcon>
-                        <SchoolIcon color="primary" />
-                      </ListItemIcon>
-                      <ListItemText primary={topic} />
-                    </ListItem>
-                  ))}
-                </List>
-              </CardContent>
-            </MotionCard>
-          </Grid>
-        </Grid>
-      </motion.div>
-
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={6000}
-        onClose={handleSnackbarClose}
-        message={snackbar.message}
-      >
-        <Alert
-          onClose={handleSnackbarClose}
-          severity={snackbar.severity}
-          variant="filled"
-          sx={{ width: '100%' }}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
+        </Box>
+      </MotionPaper>
     </Container>
   );
 };
 
-export default Dashboard;
+export default Dashboard; 

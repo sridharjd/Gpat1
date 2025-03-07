@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   AppBar,
   Box,
@@ -51,6 +51,15 @@ const Navbar = () => {
   const [notificationsAnchor, setNotificationsAnchor] = useState(null);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
 
+  useEffect(() => {
+    console.log('Navbar State:', {
+      isAuthenticated,
+      isAdmin,
+      user,
+      currentPath: location.pathname
+    });
+  }, [isAuthenticated, isAdmin, user, location]);
+
   const handleProfileMenuOpen = (event) => {
     setAnchorEl(event.currentTarget);
   };
@@ -74,7 +83,7 @@ const Navbar = () => {
     try {
       handleMenuClose();
       await logout();
-      navigate('/signin');
+      navigate('/login');
     } catch (error) {
       console.error('Logout error:', error);
     }
@@ -82,17 +91,30 @@ const Navbar = () => {
 
   const handleNavigation = useCallback((path) => {
     try {
-      if (path.startsWith('/admin/') && !isAdmin) {
-        console.warn('Unauthorized admin route access attempt');
+      console.log('Navigation Attempt:', {
+        path,
+        isAdmin,
+        currentPath: location.pathname
+      });
+
+      // Handle admin routes
+      if (path.startsWith('/admin')) {
+        if (!isAdmin) {
+          console.warn('Unauthorized admin route access attempt');
+          return;
+        }
+        handleMenuClose();
+        navigate(path, { state: { from: location.pathname } });
         return;
       }
-      
+
+      // Handle regular routes
       handleMenuClose();
-      navigate(path);
+      navigate(path, { state: { from: location.pathname } });
     } catch (error) {
       console.error('Navigation error:', error);
     }
-  }, [navigate, isAdmin]);
+  }, [navigate, isAdmin, location]);
 
   const publicPages = [
     { title: 'Home', path: '/', icon: <Home /> },
@@ -102,16 +124,14 @@ const Navbar = () => {
   ];
 
   const adminPages = [
-    { title: 'Dashboard', path: '/admin/dashboard', icon: <Dashboard /> },
-    { title: 'Upload Questions', path: '/admin/upload-questions', icon: <QuestionAnswer /> },
-    { title: 'Manage Users', path: '/admin/users', icon: <SupervisorAccount /> },
-    { title: 'Reports', path: '/admin/reports', icon: <Assessment /> }
+    { title: 'Dashboard', path: '/admin', icon: <Dashboard /> },
+    { title: 'Upload Questions', path: '/admin/questions/upload', icon: <QuestionAnswer /> },
+    { title: 'Manage Users', path: '/admin/users', icon: <SupervisorAccount /> }
   ];
 
   const userPages = [
     { title: 'Dashboard', path: '/dashboard', icon: <Dashboard /> },
-    { title: 'Take Test', path: '/test', icon: <QuestionAnswer /> },
-    { title: 'Performance', path: '/performance', icon: <Assessment /> }
+    { title: 'Take Test', path: '/test', icon: <QuestionAnswer /> }
   ];
 
   const isCurrentPath = (path) => location.pathname === path;

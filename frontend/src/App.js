@@ -18,7 +18,6 @@ import VerifyEmail from './components/auth/VerifyEmail';
 
 // User Pages
 import UserDashboard from './components/pages/user/Dashboard';
-import Performance from './components/pages/user/Performance';
 import TestResult from './components/pages/user/TestResult';
 import TestHistory from './components/pages/user/TestHistory';
 import MCQTest from './components/pages/user/MCQTest';
@@ -34,6 +33,7 @@ import Home from './components/pages/public/Home';
 import Syllabus from './components/pages/public/Syllabus';
 import About from './components/pages/public/About';
 import Contact from './components/pages/public/Contact';
+import AccountSuspended from './components/pages/public/AccountSuspended';
 
 const AppRoutes = () => {
   const { isAuthenticated, isAdmin, loading } = useAuth();
@@ -52,6 +52,7 @@ const AppRoutes = () => {
         <Route path="/syllabus" element={<Syllabus />} />
         <Route path="/about" element={<About />} />
         <Route path="/contact" element={<Contact />} />
+        <Route path="/account-suspended" element={<AccountSuspended />} />
         
         {/* Auth Routes */}
         <Route path="/signin" element={
@@ -67,7 +68,6 @@ const AppRoutes = () => {
         <Route element={<ProtectedLayout isAuthenticated={isAuthenticated} isAdmin={isAdmin} isLoading={loading} />}>
           <Route path="/dashboard" element={<UserDashboard />} />
           <Route path="/test" element={<MCQTest />} />
-          <Route path="/performance" element={<Performance />} />
           <Route path="/test-result" element={<TestResult />} />
           <Route path="/test-history" element={<TestHistory />} />
           <Route path="/profile" element={<Profile />} />

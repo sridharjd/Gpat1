@@ -151,14 +151,10 @@ const submitTest = catchAsync(async (req, res) => {
   const { answers, testData } = req.body;
   const userId = req.user.id;
   
-  if (!answers || !testData) {
-    throw new ApiError('Missing required fields', 400);
-  }
-
-  // Validate test data
-  const validation = validateTest(testData);
+  // Validate test submission
+  const validation = validateTest({ answers, testData });
   if (!validation.isValid) {
-    throw new ApiError(validation.message, 400);
+    throw new ApiError(validation.errors.join(', '), 400);
   }
 
   // Start transaction
@@ -166,118 +162,79 @@ const submitTest = catchAsync(async (req, res) => {
   await connection.beginTransaction();
 
   try {
-    // 1. Create test record
-    const [testResult] = await connection.query(
+    // Create test result
+    const [result] = await connection.query(
       `INSERT INTO test_results (
-        user_id,
-        subject_id,
-        total_questions,
-        score,
+        user_id, 
+        subject_id, 
+        total_questions, 
+        score, 
+        correct_answers,
+        incorrect_answers,
         time_taken,
-        created_at
-      ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-      [
-        userId,
-        testData.subjectId || null,
-        testData.totalQuestions || Object.keys(answers).length,
-        0, // Initial score, will be updated
-        testData.timeTaken || 0
-      ]
+        started_at,
+        completed_at
+      ) VALUES (?, ?, ?, 0, 0, 0, ?, NOW(), NOW())`,
+      [userId, testData.subjectId, testData.totalQuestions, testData.timeTaken]
     );
-    
-    const testId = testResult.insertId;
-    
-    // 2. Get correct answers in bulk
-    const questionIds = Object.keys(answers);
-    const [questions] = await connection.query(
-      'SELECT id, correct_answer, points FROM questions WHERE id IN (?)',
-      [questionIds]
-    );
-    
-    // Create a map for quick lookup
-    const questionMap = new Map(
-      questions.map(q => [q.id, { answer: q.correct_answer, points: q.points }])
-    );
-    
-    // 3. Process answers and calculate score
+
+    const testId = result.insertId;
     let totalScore = 0;
-    const answerValues = [];
-    
+    let correctAnswers = 0;
+    let incorrectAnswers = 0;
+
+    // Process each answer
     for (const [questionId, answer] of Object.entries(answers)) {
-      const question = questionMap.get(parseInt(questionId));
-      if (!question) {
-        console.log(`Question not found for ID: ${questionId}`);
-        continue;
+      // Get question details
+      const [question] = await connection.query(
+        'SELECT correct_answer FROM questions WHERE id = ?',
+        [questionId]
+      );
+
+      if (!question[0]) {
+        throw new ApiError(`Question ${questionId} not found`, 404);
       }
 
-      // Add null checks for answer and question.answer
-      if (!answer || !question.answer) {
-        console.log(`Missing answer for question ID: ${questionId}`);
-        continue;
-      }
-
-      // Ensure both answer and question.answer are strings before calling toUpperCase
-      const userAnswer = safeToUpperCase(answer);
-      const correctAnswer = safeToUpperCase(question.answer);
-      const isCorrect = userAnswer === correctAnswer;
-
+      const isCorrect = answer === question[0].correct_answer;
+      // Each question is worth 1 point
+      const points = isCorrect ? 1 : 0;
+      totalScore += points;
+      
       if (isCorrect) {
-        totalScore += question.points || 1;
+        correctAnswers++;
+      } else {
+        incorrectAnswers++;
       }
 
-      answerValues.push([
-        testId,
-        questionId,
-        userAnswer,
-        isCorrect,
-        question.points || 1,
-        new Date()
-      ]);
+      // Record answer
+      await connection.query(
+        `INSERT INTO test_answers (test_result_id, question_id, selected_answer, is_correct, time_taken)
+         VALUES (?, ?, ?, ?, ?)`,
+        [testId, questionId, answer, isCorrect, 0] // Using 0 for time_taken as it's not tracked per question
+      );
     }
 
-    // 4. Bulk insert answers
-    if (answerValues.length === 0) {
-      throw new ApiError('No valid answers provided', 400);
-    }
-
+    // Update test result with final score and counts
     await connection.query(
-      `INSERT INTO test_answers (
-        test_id,
-        question_id,
-        selected_answer,
-        is_correct,
-        points,
-        created_at
-      ) VALUES ?`,
-      [answerValues]
-    );
-    
-    // 5. Update final score
-    await connection.query(
-      'UPDATE test_results SET score = ? WHERE id = ?',
-      [totalScore, testId]
-    );
-
-    // 6. Update user statistics
-    await connection.query(
-      `UPDATE user_statistics 
-       SET 
-         total_tests = total_tests + 1,
-         total_score = total_score + ?,
-         average_score = (total_score + ?) / (total_tests + 1)
-       WHERE user_id = ?`,
-      [totalScore, totalScore, userId]
+      `UPDATE test_results 
+       SET score = ?, 
+           correct_answers = ?,
+           incorrect_answers = ?
+       WHERE id = ?`,
+      [totalScore, correctAnswers, incorrectAnswers, testId]
     );
 
     await connection.commit();
 
     res.json({
       success: true,
-      test: {
-        id: testId,
+      data: {
+        resultId: testId,
         score: totalScore,
-        totalQuestions: answerValues.length,
-        timeTaken: testData.timeTaken
+        totalQuestions: testData.totalQuestions,
+        timeTaken: testData.timeTaken,
+        correctAnswers,
+        incorrectAnswers
       }
     });
   } catch (error) {

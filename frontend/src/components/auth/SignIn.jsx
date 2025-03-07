@@ -52,19 +52,15 @@ const SignIn = () => {
     try {
       setError('');
       setLoading(true);
-      const result = await login(values);
-      if (result) {
-        navigate(result.isAdmin ? '/admin/dashboard' : '/dashboard');
+      const success = await login(values);
+      if (success) {
+        const redirectPath = isAdmin ? '/admin/dashboard' : '/dashboard';
+        navigate(redirectPath);
       }
     } catch (err) {
       console.error('Login error:', err);
-      if (err.message.includes('Invalid email or password')) {
-        setError('Invalid email or password');
-      } else if (err.message.includes('temporarily locked')) {
-        setError('Account is temporarily locked. Please try again later');
-      } else {
-        setError(err.message || 'An error occurred during login');
-      }
+      const errorMessage = err.response?.data?.message || err.message || 'Login failed. Please try again.';
+      setError(errorMessage);
     } finally {
       setLoading(false);
       setSubmitting(false);

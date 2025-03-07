@@ -187,6 +187,91 @@ const validateTestSubmission = (data) => {
   });
 };
 
+const validateTest = (testData) => {
+  const errors = [];
+
+  // Validate test data
+  if (!testData.testData) {
+    errors.push('Test data is required');
+  } else {
+    const { subjectId, totalQuestions, timeTaken } = testData.testData;
+    
+    if (!subjectId) {
+      errors.push('Subject ID is required');
+    }
+    if (!totalQuestions || totalQuestions <= 0) {
+      errors.push('Total questions must be greater than 0');
+    }
+    if (typeof timeTaken !== 'number' || timeTaken < 0) {
+      errors.push('Time taken must be a non-negative number');
+    }
+  }
+
+  // Validate answers
+  if (!testData.answers || typeof testData.answers !== 'object') {
+    errors.push('Answers must be an object');
+  } else {
+    const answers = testData.answers;
+    if (Object.keys(answers).length === 0) {
+      errors.push('At least one answer is required');
+    }
+    
+    // Validate each answer
+    Object.entries(answers).forEach(([questionId, answer]) => {
+      if (!questionId || !answer) {
+        errors.push('Invalid answer format');
+      }
+    });
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors
+  };
+};
+
+// Validate subject data
+const validateSubject = (data) => {
+  if (!data.name || typeof data.name !== 'string' || data.name.trim().length === 0) {
+    return { isValid: false, message: 'Subject name is required' };
+  }
+
+  if (!data.code || typeof data.code !== 'string' || data.code.trim().length === 0) {
+    return { isValid: false, message: 'Subject code is required' };
+  }
+
+  if (data.description && typeof data.description !== 'string') {
+    return { isValid: false, message: 'Description must be a string' };
+  }
+
+  if (typeof data.isActive !== 'boolean') {
+    return { isValid: false, message: 'isActive must be a boolean value' };
+  }
+
+  return { isValid: true };
+};
+
+// Validate report parameters
+const validateReport = ({ type, range, format }) => {
+  const validTypes = ['users', 'tests', 'subjects'];
+  const validRanges = ['7d', '30d', '90d', '1y'];
+  const validFormats = ['csv', 'pdf'];
+
+  if (!validTypes.includes(type)) {
+    return { isValid: false, message: 'Invalid report type' };
+  }
+
+  if (!validRanges.includes(range)) {
+    return { isValid: false, message: 'Invalid time range' };
+  }
+
+  if (!validFormats.includes(format)) {
+    return { isValid: false, message: 'Invalid format' };
+  }
+
+  return { isValid: true };
+};
+
 module.exports = {
   validatePassword,
   validateEmail,
@@ -197,5 +282,8 @@ module.exports = {
   validateDate,
   validateTestSubmission,
   sanitizeUser,
-  REGEX
+  REGEX,
+  validateTest,
+  validateSubject,
+  validateReport
 }; 

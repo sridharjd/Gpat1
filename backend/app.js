@@ -42,20 +42,22 @@ app.use(cookieParser());
 
 // Rate limiting
 const limiter = rateLimit({
-  max: parseInt(process.env.RATE_LIMIT_MAX || '100', 10),
+  max: parseInt(process.env.RATE_LIMIT_MAX || '1000', 10),
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10), // 15 minutes default
-  message: 'Too many requests from this IP, please try again later!'
+  message: 'Too many requests from this IP, please try again later!',
+  skip: (req) => process.env.NODE_ENV === 'development'
 });
 
 // Registration specific rate limit
 const registrationLimiter = rateLimit({
-  max: 5, // 5 attempts
+  max: 20,
   windowMs: 60 * 60 * 1000, // 1 hour
   message: {
     success: false,
     message: 'Too many registration attempts. Please try again in an hour.',
     retryAfter: 3600 // 1 hour in seconds
   },
+  skip: (req) => process.env.NODE_ENV === 'development',
   handler: (req, res) => {
     res.status(429).json({
       success: false,

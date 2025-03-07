@@ -219,51 +219,44 @@ const updateProfile = catchAsync(async (req, res) => {
 
 // Get user test history
 const getTestHistory = catchAsync(async (req, res) => {
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 10;
-  const offset = (page - 1) * limit;
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
 
-  // Get total count
-  const [countResult] = await db.query(
-    'SELECT COUNT(*) as total FROM test_results WHERE user_id = ?',
-    [req.user.id]
-  );
-  const total = countResult[0].total;
+    // Get total count
+    const [countResult] = await db.query(
+      'SELECT COUNT(*) as total FROM test_results WHERE user_id = ?',
+      [req.user.id]
+    );
+    const total = countResult[0]?.total || 0;
 
-  // Get paginated results
-  const [tests] = await db.query(`
-    SELECT 
-      tr.*,
-      t.title as test_name,
-      t.description,
-      t.total_questions,
-      t.duration
-    FROM test_results tr
-    JOIN tests t ON t.id = tr.test_id
-    WHERE tr.user_id = ?
-    ORDER BY tr.created_at DESC
-    LIMIT ? OFFSET ?
-  `, [req.user.id, limit, offset]);
+    // Get paginated results
+    const [tests] = await db.query(`
+      SELECT 
+        tr.*,
+        s.name as subject_name
+      FROM test_results tr
+      LEFT JOIN subjects s ON s.id = tr.subject_id
+      WHERE tr.user_id = ?
+      ORDER BY tr.created_at DESC
+      LIMIT ? OFFSET ?
+    `, [req.user.id, limit, offset]);
 
-  res.json({
-    success: true,
-    pagination: {
-      page,
-      limit,
-      total,
-      pages: Math.ceil(total / limit)
-    },
-    tests: tests.map(test => ({
-      id: test.id,
-      testName: test.test_name,
-      description: test.description,
-      score: test.score,
-      totalQuestions: test.total_questions,
-      duration: test.duration,
-      timeTaken: test.time_taken,
-      completedAt: test.created_at
-    }))
-  });
+    res.json({
+      success: true,
+      data: tests,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching test history:', error);
+    throw new ApiError('Failed to fetch test history', 500);
+  }
 });
 
 // Get specific test result
@@ -418,65 +411,116 @@ const updateSettings = catchAsync(async (req, res) => {
 
 // Get user performance statistics
 const getPerformanceStats = catchAsync(async (req, res) => {
-  const stats = await UserPerformance.aggregate([
-    { $match: { user: req.user._id } },
-    {
-      $group: {
-        _id: '$category',
-        averageScore: { $avg: '$score' },
-        totalTests: { $sum: 1 },
-        totalCorrect: { $sum: '$correctAnswers' },
-        totalQuestions: { $sum: '$totalQuestions' },
-        averageTime: { $avg: '$timeTaken' }
-      }
-    }
-  ]);
+  try {
+    // Get overall performance stats
+    const [overallStats] = await db.query(`
+      SELECT 
+        COUNT(*) as totalTests,
+        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completedTests,
+        ROUND(AVG(CASE WHEN status = 'completed' THEN score END), 2) as averageScore,
+        ROUND(AVG(CASE WHEN status = 'completed' THEN time_taken END), 2) as averageTime
+      FROM test_results
+      WHERE user_id = ?
+    `, [req.user.id]);
 
-  const overall = await UserPerformance.aggregate([
-    { $match: { user: req.user._id } },
-    {
-      $group: {
-        _id: null,
-        averageScore: { $avg: '$score' },
-        totalTests: { $sum: 1 },
-        totalCorrect: { $sum: '$correctAnswers' },
-        totalQuestions: { $sum: '$totalQuestions' },
-        averageTime: { $avg: '$timeTaken' }
-      }
-    }
-  ]);
+    // Get performance by category
+    const [categoryStats] = await db.query(`
+      SELECT 
+        t.category,
+        COUNT(*) as totalTests,
+        COUNT(CASE WHEN tr.status = 'completed' THEN 1 END) as completedTests,
+        ROUND(AVG(CASE WHEN tr.status = 'completed' THEN tr.score END), 2) as averageScore,
+        ROUND(AVG(CASE WHEN tr.status = 'completed' THEN tr.time_taken END), 2) as averageTime
+      FROM test_results tr
+      JOIN tests t ON t.id = tr.test_id
+      WHERE tr.user_id = ?
+      GROUP BY t.category
+    `, [req.user.id]);
 
-  res.json({
-    success: true,
-    data: {
-      categoryStats: stats,
-      overall: overall[0] || {
-        averageScore: 0,
-        totalTests: 0,
-        totalCorrect: 0,
-        totalQuestions: 0,
-        averageTime: 0
+    res.json({
+      success: true,
+      data: {
+        overall: overallStats[0] || {
+          totalTests: 0,
+          completedTests: 0,
+          averageScore: 0,
+          averageTime: 0
+        },
+        categories: categoryStats || []
       }
+    });
+  } catch (error) {
+    // If table doesn't exist or other database error, return empty results
+    if (error.code === 'ER_NO_SUCH_TABLE' || error.code === 'ER_BAD_FIELD_ERROR') {
+      res.json({
+        success: true,
+        data: {
+          overall: {
+            totalTests: 0,
+            completedTests: 0,
+            averageScore: 0,
+            averageTime: 0
+          },
+          categories: []
+        }
+      });
+    } else {
+      throw error;
     }
-  });
+  }
 });
 
 // Get recent performance history
 const getPerformanceHistory = catchAsync(async (req, res) => {
-  const { limit = 10, category } = req.query;
-  
-  const query = { user: req.user._id };
-  if (category) {
-    query.category = category;
+  try {
+    const { limit = 10, category } = req.query;
+    
+    let query = `
+      SELECT 
+        tr.*,
+        t.title as test_name,
+        t.category,
+        t.difficulty
+      FROM test_results tr
+      JOIN tests t ON t.id = tr.test_id
+      WHERE tr.user_id = ?
+    `;
+    const params = [req.user.id];
+
+    if (category) {
+      query += ' AND t.category = ?';
+      params.push(category);
+    }
+
+    query += ' ORDER BY tr.created_at DESC LIMIT ?';
+    params.push(parseInt(limit));
+
+    const [history] = await db.query(query, params);
+
+    res.json({ 
+      success: true, 
+      data: history.map(item => ({
+        id: item.id,
+        testName: item.test_name,
+        category: item.category,
+        difficulty: item.difficulty,
+        score: item.score,
+        timeTaken: item.time_taken,
+        completedAt: item.created_at,
+        status: item.status
+      }))
+    });
+  } catch (error) {
+    // If table doesn't exist or other database error, return empty results
+    if (error.code === 'ER_NO_SUCH_TABLE' || error.code === 'ER_BAD_FIELD_ERROR') {
+      res.json({
+        success: true,
+        data: []
+      });
+    } else {
+      throw error;
+    }
   }
-
-  const history = await UserPerformance.find(query)
-    .sort({ completedAt: -1 })
-    .limit(parseInt(limit))
-    .populate('testId', 'title')
-    .select('-answers');
-
-  res.json({ success: true, data: history });
 });
 
 // Delete user account
@@ -500,18 +544,47 @@ const deleteAccount = catchAsync(async (req, res) => {
 
 // Get user performance details for a specific test
 const getTestPerformance = catchAsync(async (req, res) => {
-  const { testId } = req.params;
-  
-  const performance = await UserPerformance.findOne({
-    user: req.user._id,
-    testId
-  }).populate('testId', 'title category difficulty');
+  try {
+    const { testId } = req.params;
+    
+    const [performance] = await db.query(`
+      SELECT 
+        tr.*,
+        t.title as test_name,
+        t.category,
+        t.difficulty
+      FROM test_results tr
+      JOIN tests t ON t.id = tr.test_id
+      WHERE tr.id = ? AND tr.user_id = ?
+    `, [testId, req.user.id]);
 
-  if (!performance) {
-    throw new ApiError('Performance record not found', 404);
+    if (!performance[0]) {
+      throw new ApiError('Performance record not found', 404);
+    }
+
+    res.json({ 
+      success: true, 
+      data: {
+        id: performance[0].id,
+        testName: performance[0].test_name,
+        category: performance[0].category,
+        difficulty: performance[0].difficulty,
+        score: performance[0].score,
+        timeTaken: performance[0].time_taken,
+        completedAt: performance[0].created_at,
+        status: performance[0].status
+      }
+    });
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    // If table doesn't exist or other database error, return 404
+    if (error.code === 'ER_NO_SUCH_TABLE' || error.code === 'ER_BAD_FIELD_ERROR') {
+      throw new ApiError('Performance record not found', 404);
+    }
+    throw error;
   }
-
-  res.json({ success: true, data: performance });
 });
 
 // Export the functions
