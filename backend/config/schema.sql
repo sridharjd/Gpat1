@@ -45,13 +45,13 @@ CREATE TABLE IF NOT EXISTS test_results (
 -- Create test_answers table
 CREATE TABLE IF NOT EXISTS test_answers (
   id INT PRIMARY KEY AUTO_INCREMENT,
-  test_id INT NOT NULL,
+  test_result_id INT NOT NULL,
   question_id INT NOT NULL,
   selected_answer CHAR(1) NOT NULL,
   is_correct BOOLEAN NOT NULL,
   points INT DEFAULT 1,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (test_id) REFERENCES test_results(id),
+  FOREIGN KEY (test_result_id) REFERENCES test_results(id),
   FOREIGN KEY (question_id) REFERENCES questions(id)
 );
 

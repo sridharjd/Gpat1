@@ -10,7 +10,6 @@ import Login from './components/pages/auth/Login';
 import Register from './components/pages/auth/Register';
 import Dashboard from './components/pages/user/Dashboard';
 import MCQTest from './components/pages/user/MCQTest';
-import TestHistory from './components/pages/user/TestHistory';
 import TestResult from './components/pages/user/TestResult';
 import Profile from './components/pages/user/Profile';
 import AdminDashboard from './components/pages/admin/AdminDashboard';
@@ -36,7 +35,6 @@ const App = () => {
               <Route index element={<Dashboard />} />
               <Route path="dashboard" element={<Dashboard />} />
               <Route path="test" element={<MCQTest />} />
-              <Route path="history" element={<TestHistory />} />
               <Route path="result/:resultId" element={<TestResult />} />
               <Route path="profile" element={<Profile />} />
             </Route>

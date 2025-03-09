@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { ThemeProvider } from '@mui/material/styles';
-import CssBaseline from '@mui/material/CssBaseline';
+import { ThemeProvider, CssBaseline } from '@mui/material';
 import { lightTheme, darkTheme } from './theme';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { WebSocketProvider } from './contexts/WebSocketContext';
@@ -19,7 +18,6 @@ import VerifyEmail from './components/auth/VerifyEmail';
 // User Pages
 import UserDashboard from './components/pages/user/Dashboard';
 import TestResult from './components/pages/user/TestResult';
-import TestHistory from './components/pages/user/TestHistory';
 import MCQTest from './components/pages/user/MCQTest';
 import Profile from './components/pages/user/Profile';
 import Settings from './components/pages/user/Settings';
@@ -68,8 +66,7 @@ const AppRoutes = () => {
         <Route element={<ProtectedLayout isAuthenticated={isAuthenticated} isAdmin={isAdmin} isLoading={loading} />}>
           <Route path="/dashboard" element={<UserDashboard />} />
           <Route path="/test" element={<MCQTest />} />
-          <Route path="/test-result" element={<TestResult />} />
-          <Route path="/test-history" element={<TestHistory />} />
+          <Route path="/test-result/:testId" element={<TestResult />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/settings" element={<Settings />} />
         </Route>

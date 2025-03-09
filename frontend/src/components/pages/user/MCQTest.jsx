@@ -139,23 +139,28 @@ const MCQTest = () => {
         severity: 'success'
       });
 
-      // Wait for a short delay to show the snackbar
-      setTimeout(() => {
-        // Navigate to the result page with the correct path
-        const path = `/result/${result.resultId}`;
-        console.log('Navigating to:', path);
-        
-        // Navigate directly to the result page
-        navigate(path, { 
-          state: { result },
-          preventScrollReset: true
-        });
-      }, 1000); // 1 second delay
+      // Fetch complete test result including questions and answers
+      const response = await apiService.test.getResults(result.resultId);
+      if (!response?.data?.success) {
+        throw new Error('Failed to fetch test result details');
+      }
+
+      const completeResult = response.data.data;
+      console.log('Complete test result:', completeResult);
+
+      // Navigate to the result page with the complete result
+      const path = `/test-result/${result.resultId}`;
+      console.log('Navigating to:', path);
+      
+      navigate(path, { 
+        state: { result: completeResult },
+        preventScrollReset: true
+      });
     } catch (error) {
-      console.error('Error navigating to result page:', error);
+      console.error('Error handling test completion:', error);
       setSnackbar({
         open: true,
-        message: 'Error navigating to result page',
+        message: error.message || 'Error processing test result',
         severity: 'error'
       });
     }

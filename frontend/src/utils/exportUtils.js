@@ -50,12 +50,14 @@ const ExportUtils = {
       
       // Add title
       doc.setFontSize(18);
-      doc.text(title, 14, 22);
+      doc.text(title || 'Export Report', 14, 22);
       
       // Add metadata
       doc.setFontSize(11);
-      doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30);
-      doc.text(`Total Records: ${data.length}`, 14, 36);
+      const generatedText = `Generated: ${new Date().toLocaleString()}`;
+      const recordsText = `Total Records: ${data.length}`;
+      doc.text(generatedText, 14, 30);
+      doc.text(recordsText, 14, 36);
 
       // Process data in chunks to avoid memory issues
       const chunks = [];
@@ -64,36 +66,34 @@ const ExportUtils = {
       }
 
       let currentRow = 0;
-      for (const chunk of chunks) {
-        // Create table rows for this chunk
-        const rows = chunk.map(item => columns.map(col => item[col.key]));
-        
-        // Add table
-        doc.autoTable({
-          startY: currentRow === 0 ? 44 : undefined,
-          head: [columns.map(col => col.header)],
-          body: rows,
-          didDrawPage: () => {
-            // Add page numbers
-            const pageCount = doc.internal.getNumberOfPages();
-            doc.setFontSize(10);
-            for (let i = 1; i <= pageCount; i++) {
-              doc.setPage(i);
-              doc.text(
-                `Page ${i} of ${pageCount}`,
-                doc.internal.pageSize.width - 20,
-                doc.internal.pageSize.height - 10
-              );
-            }
+      
+      // Add table
+      doc.autoTable({
+        startY: 44,
+        head: [columns.map(col => col.header)],
+        body: data.map(item => columns.map(col => item[col.key])),
+        theme: 'grid',
+        styles: { fontSize: 9, cellPadding: 3 },
+        headStyles: { fillColor: [41, 128, 185], textColor: 255 },
+        alternateRowStyles: { fillColor: [240, 240, 240] },
+        didDrawPage: () => {
+          // Add page numbers
+          const pageCount = doc.internal.getNumberOfPages();
+          doc.setFontSize(10);
+          for (let i = 1; i <= pageCount; i++) {
+            doc.setPage(i);
+            doc.text(
+              `Page ${i} of ${pageCount}`,
+              doc.internal.pageSize.width - 20,
+              doc.internal.pageSize.height - 10
+            );
           }
-        });
-
-        currentRow += chunk.length;
-        onProgress((currentRow / data.length) * 100);
-      }
+        }
+      });
 
       const pdfBlob = doc.output('blob');
-      saveAs(pdfBlob, this.generateFilename(filename, 'pdf'));
+      const generatedFilename = ExportUtils.generateFilename(filename, 'pdf');
+      saveAs(pdfBlob, generatedFilename);
       return pdfBlob;
     } catch (error) {
       console.error('PDF export failed:', error);
@@ -160,7 +160,8 @@ const ExportUtils = {
       // Generate Excel file
       const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
       const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      saveAs(blob, this.generateFilename(filename, 'xlsx'));
+      const generatedFilename = ExportUtils.generateFilename(filename, 'xlsx');
+      saveAs(blob, generatedFilename);
       return blob;
     } catch (error) {
       console.error('Excel export failed:', error);

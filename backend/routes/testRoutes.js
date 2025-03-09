@@ -2,11 +2,6 @@ const express = require('express');
 const testController = require('../controllers/testController');
 const { protect } = require('../middleware/authMiddleware');
 const asyncHandler = require('../utils/asyncHandler');
-const {
-  getTestHistory,
-  getTestStats,
-  getTestById
-} = require('../controllers/testHistoryController');
 
 const router = express.Router();
 
@@ -35,24 +30,31 @@ router.get('/questions', asyncHandler(testController.getTestQuestions));
 router.post('/submit', asyncHandler(testController.submitTest));
 
 /**
+ * @route   GET /tests/results/:testId
+ * @desc    Get test results by test ID
+ * @access  Private
+ */
+router.get('/results/:testId', asyncHandler(testController.getTestResults));
+
+/**
  * @route   GET /tests/history
  * @desc    Get user's test history
  * @access  Private
  */
-router.get('/history', getTestHistory);
+router.get('/history', asyncHandler(testController.getTestHistory));
+
+/**
+ * @route   GET /tests/history/:userId
+ * @desc    Get test history for a specific user
+ * @access  Private
+ */
+router.get('/history/:userId', asyncHandler(testController.getTestHistory));
 
 /**
  * @route   GET /tests/stats
  * @desc    Get user's test statistics
  * @access  Private
  */
-router.get('/stats', getTestStats);
-
-/**
- * @route   GET /tests/:id
- * @desc    Get a specific test result by ID
- * @access  Private
- */
-router.get('/:id', getTestById);
+router.get('/stats', asyncHandler(testController.getTestStats));
 
 module.exports = router;

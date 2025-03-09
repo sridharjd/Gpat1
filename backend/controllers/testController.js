@@ -210,18 +210,27 @@ const submitTest = catchAsync(async (req, res) => {
       await connection.query(
         `INSERT INTO test_answers (test_result_id, question_id, selected_answer, is_correct, time_taken)
          VALUES (?, ?, ?, ?, ?)`,
-        [testId, questionId, answer, isCorrect, 0] // Using 0 for time_taken as it's not tracked per question
+        [testId, questionId, answer, isCorrect, 0]
       );
     }
+
+    // Calculate actual number of questions answered
+    const answeredQuestions = Object.keys(answers).length;
+    console.log('Questions answered:', answeredQuestions, 'Correct answers:', correctAnswers);
+
+    // Calculate percentage score based on answered questions
+    const percentageScore = (correctAnswers / answeredQuestions) * 100;
+    console.log('Percentage score:', percentageScore);
 
     // Update test result with final score and counts
     await connection.query(
       `UPDATE test_results 
        SET score = ?, 
            correct_answers = ?,
-           incorrect_answers = ?
+           incorrect_answers = ?,
+           total_questions = ?
        WHERE id = ?`,
-      [totalScore, correctAnswers, incorrectAnswers, testId]
+      [percentageScore, correctAnswers, incorrectAnswers, answeredQuestions, testId]
     );
 
     await connection.commit();
@@ -230,8 +239,8 @@ const submitTest = catchAsync(async (req, res) => {
       success: true,
       data: {
         resultId: testId,
-        score: totalScore,
-        totalQuestions: testData.totalQuestions,
+        score: percentageScore,
+        totalQuestions: answeredQuestions,
         timeTaken: testData.timeTaken,
         correctAnswers,
         incorrectAnswers
@@ -247,18 +256,17 @@ const submitTest = catchAsync(async (req, res) => {
 
 // Get user's test history with pagination and caching
 const getTestHistory = catchAsync(async (req, res) => {
-  const userId = req.user.id;
+  const userId = req.params.userId || req.user.id;
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const offset = (page - 1) * limit;
 
-  // Try cache first
-  const cacheKey = `user:${userId}:tests:${page}:${limit}`;
-  const cachedHistory = await cache.get(cacheKey);
+  console.log('Fetching test history for user:', userId);
+  console.log('Page:', page, 'Limit:', limit, 'Offset:', offset);
 
-  if (cachedHistory) {
-    return res.json(JSON.parse(cachedHistory));
-  }
+  // Clear cache for debugging
+  const cacheKey = `user:${userId}:tests:${page}:${limit}`;
+  await cache.clear();
   
   // Get total count
   const [countResult] = await db.query(
@@ -267,7 +275,8 @@ const getTestHistory = catchAsync(async (req, res) => {
   );
   
   const total = countResult[0].total;
-  
+  console.log('Total test results found:', total);
+
   // Get paginated test history with details
   const [tests] = await db.query(`
     SELECT 
@@ -280,14 +289,8 @@ const getTestHistory = catchAsync(async (req, res) => {
       (
         SELECT COUNT(*)
         FROM test_answers ta
-        WHERE ta.test_id = tr.id AND ta.is_correct = true
-      ) as correct_answers,
-      (
-        SELECT GROUP_CONCAT(DISTINCT q.topic)
-        FROM test_answers ta
-        JOIN questions q ON ta.question_id = q.id
-        WHERE ta.test_id = tr.id
-      ) as topics
+        WHERE ta.test_result_id = tr.id AND ta.is_correct = true
+      ) as correct_answers
     FROM test_results tr
     LEFT JOIN subjects s ON tr.subject_id = s.id
     WHERE tr.user_id = ?
@@ -295,6 +298,9 @@ const getTestHistory = catchAsync(async (req, res) => {
     LIMIT ? OFFSET ?`,
     [userId, limit, offset]
   );
+
+  console.log('Tests found:', tests.length);
+  console.log('Test results:', JSON.stringify(tests, null, 2));
 
   const result = {
     success: true,
@@ -313,13 +319,14 @@ const getTestHistory = catchAsync(async (req, res) => {
       completedAt: test.created_at,
       subject: test.subject_name ? {
         name: test.subject_name
-      } : null,
-      topics: test.topics ? test.topics.split(',') : []
+      } : null
     }))
   };
 
-  // Cache for 5 minutes
-  await cache.set(cacheKey, JSON.stringify(result), 300);
+  // Only cache if we have results
+  if (tests.length > 0) {
+    await cache.set(cacheKey, JSON.stringify(result), 300);
+  }
 
   res.json(result);
 });
@@ -353,7 +360,7 @@ const getTestById = catchAsync(async (req, res) => {
         )
       ) as answers
     FROM test_results tr
-    LEFT JOIN test_answers ta ON tr.id = ta.test_id
+    LEFT JOIN test_answers ta ON tr.id = ta.test_result_id
     LEFT JOIN questions q ON ta.question_id = q.id
     WHERE tr.id = ? AND tr.user_id = ?
     GROUP BY tr.id`,
@@ -473,6 +480,88 @@ const getTestStats = catchAsync(async (req, res) => {
   res.json(result);
 });
 
+/**
+ * @desc    Get test results by test ID
+ * @route   GET /tests/results/:testId
+ * @access  Private
+ */
+const getTestResults = catchAsync(async (req, res) => {
+    const { testId } = req.params;
+    const userId = req.user.id;
+
+    console.log('Fetching test results for testId:', testId, 'userId:', userId);
+
+    const [testResult] = await db.query(`
+        SELECT 
+            tr.id,
+            tr.score,
+            tr.total_questions,
+            tr.correct_answers,
+            tr.incorrect_answers,
+            tr.time_taken,
+            tr.created_at,
+            s.name as subject_name,
+            JSON_ARRAYAGG(
+                JSON_OBJECT(
+                    'questionId', q.id,
+                    'question', q.question_text,
+                    'options', JSON_ARRAY(
+                        q.option_a,
+                        q.option_b,
+                        q.option_c,
+                        q.option_d
+                    ),
+                    'correctOption', q.correct_answer,
+                    'selectedOption', ta.selected_answer,
+                    'isCorrect', CAST(ta.is_correct AS UNSIGNED),
+                    'explanation', q.explanation
+                )
+            ) as questions
+        FROM test_results tr
+        LEFT JOIN subjects s ON tr.subject_id = s.id
+        LEFT JOIN test_answers ta ON tr.id = ta.test_result_id
+        LEFT JOIN questions q ON ta.question_id = q.id
+        WHERE tr.id = ? AND tr.user_id = ?
+        GROUP BY tr.id, tr.score, tr.total_questions, tr.correct_answers, tr.incorrect_answers, tr.time_taken, tr.created_at, s.name
+    `, [testId, userId]);
+
+    console.log('Test result query response:', testResult);
+
+    if (!testResult || testResult.length === 0) {
+        console.log('No test result found for testId:', testId, 'userId:', userId);
+        return res.status(404).json({
+            success: false,
+            message: 'Test result not found'
+        });
+    }
+
+    const result = testResult[0];
+    console.log('Raw result:', result);
+    
+    // The questions are already parsed by MySQL's JSON_ARRAYAGG
+    const questions = result.questions || [];
+
+    const response = {
+        success: true,
+        data: {
+            testId: result.id,
+            subject: {
+                name: result.subject_name
+            },
+            totalQuestions: result.total_questions,
+            correctAnswers: result.correct_answers,
+            incorrectAnswers: result.incorrect_answers,
+            score: parseFloat(result.score).toFixed(2),
+            timeTaken: result.time_taken,
+            questions: questions,
+            submittedAt: result.created_at
+        }
+    };
+
+    console.log('Sending response:', response);
+    res.json(response);
+});
+
 // Export all functions
 module.exports = {
   getTestQuestions,
@@ -480,5 +569,6 @@ module.exports = {
   submitTest,
   getTestHistory,
   getTestById,
-  getTestStats
+  getTestStats,
+  getTestResults,
 };
