@@ -131,31 +131,19 @@ const sanitizeUser = (user) => {
 
   const {
     password,
-    refresh_token,
-    reset_token,
-    reset_token_expires,
-    verification_token,
-    verification_token_expires,
-    login_attempts,
-    last_failed_login,
     ...safeUser
   } = user;
 
   return {
     ...safeUser,
     id: user.id,
-    username: user.username,
     email: user.email,
-    firstName: user.first_name,
-    lastName: user.last_name,
-    phoneNumber: user.phone_number,
-    isAdmin: Boolean(user.is_admin),
-    isVerified: Boolean(user.is_verified),
-    isActive: Boolean(user.is_active),
+    fullName: user.full_name,
+    role: user.role,
+    status: user.status,
+    isAdmin: user.role === 'admin',
     createdAt: user.created_at,
-    updatedAt: user.updated_at,
-    lastLogin: user.last_login,
-    avatarUrl: user.avatar_url
+    updatedAt: user.updated_at
   };
 };
 
@@ -194,10 +182,10 @@ const validateTest = (testData) => {
   if (!testData.testData) {
     errors.push('Test data is required');
   } else {
-    const { subjectId, totalQuestions, timeTaken } = testData.testData;
+    const { degree, totalQuestions, timeTaken } = testData.testData;
     
-    if (!subjectId) {
-      errors.push('Subject ID is required');
+    if (!degree) {
+      errors.push('Degree (exam type) is required');
     }
     if (!totalQuestions || totalQuestions <= 0) {
       errors.push('Total questions must be greater than 0');

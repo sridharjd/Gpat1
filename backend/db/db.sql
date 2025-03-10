@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS subjects (
 );
 
 -- Questions Table
-CREATE TABLE IF NOT EXISTS pyq_questions (
+CREATE TABLE IF NOT EXISTS questions (
     id INT AUTO_INCREMENT PRIMARY KEY,
     year INT NOT NULL,
     subject_id INT NOT NULL,
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS user_responses (
     is_correct BOOLEAN NOT NULL,
     test_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (question_id) REFERENCES pyq_questions(id) ON DELETE CASCADE
+    FOREIGN KEY (question_id) REFERENCES questions(id) ON DELETE CASCADE
 );
 
 -- User Performance Table
@@ -72,7 +72,7 @@ INSERT INTO subjects (name, description) VALUES
 ('Pharmacognosy', 'Study of medicinal drugs derived from plants or other natural sources.');
 
 -- Questions
-INSERT INTO pyq_questions (year, subject_id, question, answer, option1, option2, option3, option4, degree) VALUES
+INSERT INTO questions (year, subject_id, question, answer, option1, option2, option3, option4, degree) VALUES
 (2020, 1, 'What is the primary mechanism of drug release from a matrix tablet?', 'Diffusion', 'Diffusion', 'Erosion', 'Osmosis', 'Dissolution', 'Bpharm'),
 (2020, 2, 'Which of the following is a beta-blocker?', 'Propranolol', 'Propranolol', 'Amlodipine', 'Losartan', 'Omeprazole', 'Bpharm'),
 (2020, 3, 'What is the active constituent of Turmeric?', 'Curcumin', 'Curcumin', 'Capsaicin', 'Quercetin', 'Resveratrol', 'Bpharm'),

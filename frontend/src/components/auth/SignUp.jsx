@@ -15,28 +15,18 @@ const SignUp = () => {
 
   const formik = useFormik({
     initialValues: {
-      username: '',
       email: '',
       password: '',
       confirmPassword: '',
-      firstName: '',
-      lastName: '',
-      phoneNumber: '',
+      fullName: ''
     },
     validationSchema: Yup.object({
-      username: Yup.string()
-        .min(3, 'Username must be at least 3 characters')
-        .matches(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores')
-        .required('Username is required'),
       email: Yup.string()
         .email('Invalid email address')
         .required('Email is required'),
-      firstName: Yup.string()
-        .required('First name is required')
-        .min(2, 'First name must be at least 2 characters'),
-      lastName: Yup.string()
-        .required('Last name is required')
-        .min(2, 'Last name must be at least 2 characters'),
+      fullName: Yup.string()
+        .required('Full name is required')
+        .min(2, 'Full name must be at least 2 characters'),
       password: Yup.string()
         .min(8, 'Password must be at least 8 characters')
         .matches(
@@ -46,10 +36,7 @@ const SignUp = () => {
         .required('Password is required'),
       confirmPassword: Yup.string()
         .oneOf([Yup.ref('password'), null], 'Passwords must match')
-        .required('Confirm password is required'),
-      phoneNumber: Yup.string()
-        .matches(/^\+?[1-9]\d{9,11}$/, 'Please enter a valid phone number')
-        .required('Phone number is required'),
+        .required('Confirm password is required')
     }),
     onSubmit: async (values) => {
       setIsLoading(true);
@@ -59,15 +46,12 @@ const SignUp = () => {
       
       try {
         const response = await register({
-          username: values.username,
           email: values.email,
           password: values.password,
-          firstName: values.firstName,
-          lastName: values.lastName,
-          phoneNumber: values.phoneNumber
+          fullName: values.fullName
         });
 
-        setSuccess('Sign up successful! Please check your email to verify your account.');
+        setSuccess('Sign up successful! Redirecting to sign in...');
         setTimeout(() => {
           navigate('/signin');
         }, 3000);
@@ -133,42 +117,16 @@ const SignUp = () => {
 
         <Box component="form" onSubmit={formik.handleSubmit} sx={{ mt: 3, width: '100%' }}>
           <Grid container spacing={2}>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                id="firstName"
-                name="firstName"
-                label="First Name"
-                value={formik.values.firstName}
-                onChange={formik.handleChange}
-                error={formik.touched.firstName && Boolean(formik.errors.firstName)}
-                helperText={formik.touched.firstName && formik.errors.firstName}
-                disabled={isLoading || rateLimitInfo}
-              />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                id="lastName"
-                name="lastName"
-                label="Last Name"
-                value={formik.values.lastName}
-                onChange={formik.handleChange}
-                error={formik.touched.lastName && Boolean(formik.errors.lastName)}
-                helperText={formik.touched.lastName && formik.errors.lastName}
-                disabled={isLoading || rateLimitInfo}
-              />
-            </Grid>
             <Grid item xs={12}>
               <TextField
                 fullWidth
-                id="username"
-                name="username"
-                label="Username"
-                value={formik.values.username}
+                id="fullName"
+                name="fullName"
+                label="Full Name"
+                value={formik.values.fullName}
                 onChange={formik.handleChange}
-                error={formik.touched.username && Boolean(formik.errors.username)}
-                helperText={formik.touched.username && formik.errors.username}
+                error={formik.touched.fullName && Boolean(formik.errors.fullName)}
+                helperText={formik.touched.fullName && formik.errors.fullName}
                 disabled={isLoading || rateLimitInfo}
               />
             </Grid>
@@ -183,19 +141,6 @@ const SignUp = () => {
                 onChange={formik.handleChange}
                 error={formik.touched.email && Boolean(formik.errors.email)}
                 helperText={formik.touched.email && formik.errors.email}
-                disabled={isLoading || rateLimitInfo}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                id="phoneNumber"
-                name="phoneNumber"
-                label="Phone Number"
-                value={formik.values.phoneNumber}
-                onChange={formik.handleChange}
-                error={formik.touched.phoneNumber && Boolean(formik.errors.phoneNumber)}
-                helperText={formik.touched.phoneNumber && formik.errors.phoneNumber}
                 disabled={isLoading || rateLimitInfo}
               />
             </Grid>

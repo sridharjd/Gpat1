@@ -1,4 +1,5 @@
 const db = require('../config/db').pool;
+
 const logger = require('../config/logger');
 const { ApiError } = require('../utils/errors');
 const { catchAsync } = require('../utils/errors');
@@ -20,24 +21,24 @@ const normalizeAnswer = (answer) => {
 
 // Get test questions with caching
 const getTestQuestions = catchAsync(async (req, res) => {
-  const { count = 10, subject_id, year } = req.query;
+  const { count = 10, subject_id, year, degree } = req.query;
   const userId = req.user.id;
 
   let query = `
     SELECT 
       q.id,
-      q.question_text,
-      q.option_a,
-      q.option_b,
-      q.option_c,
-      q.option_d,
-      q.correct_answer,
-      q.explanation,
+      q.question,
+      q.option1,
+      q.option2,
+      q.option3,
+      q.option4,
+      q.answer as correct_answer,
       q.degree,
-      s.name as subject_name
+      s.name as subject_name,
+      s.id as subject_id
     FROM questions q
     JOIN subjects s ON q.subject_id = s.id
-    WHERE q.is_active = true
+    WHERE s.is_active = 1
   `;
 
   const params = [];
@@ -52,6 +53,11 @@ const getTestQuestions = catchAsync(async (req, res) => {
     params.push(year);
   }
 
+  if (degree) {
+    query += ' AND q.degree = ?';
+    params.push(degree);
+  }
+
   query += ' ORDER BY RAND() LIMIT ?';
   params.push(parseInt(count));
 
@@ -62,13 +68,12 @@ const getTestQuestions = catchAsync(async (req, res) => {
   console.log('Query result:', questions);
 
   if (!questions.length) {
-    // Let's check if there are any questions at all
-    const [allQuestions] = await db.query('SELECT COUNT(*) as count FROM questions');
-    console.log('Total questions in database:', allQuestions[0].count);
-    
-    // Check if there are any active questions
-    const [activeQuestions] = await db.query('SELECT COUNT(*) as count FROM questions WHERE is_active = true');
-    console.log('Active questions in database:', activeQuestions[0].count);
+    // Let's check if there are any questions at all for this degree
+    const [allQuestions] = await db.query(
+      'SELECT COUNT(*) as count FROM questions WHERE degree = ?',
+      [degree]
+    );
+    console.log('Total questions for degree:', degree, ':', allQuestions[0].count);
     
     throw new ApiError('No questions found for the selected criteria', 404);
   }
@@ -77,15 +82,14 @@ const getTestQuestions = catchAsync(async (req, res) => {
     success: true,
     data: questions.map(question => ({
       id: question.id,
-      question: question.question_text,
+      question: question.question,
       options: {
-        A: question.option_a,
-        B: question.option_b,
-        C: question.option_c,
-        D: question.option_d
+        A: question.option1,
+        B: question.option2,
+        C: question.option3,
+        D: question.option4
       },
       correctAnswer: question.correct_answer,
-      explanation: question.explanation,
       difficulty: question.degree,
       subject: {
         id: question.subject_id,
@@ -104,26 +108,37 @@ const getTestFilters = catchAsync(async (req, res) => {
     return res.json(JSON.parse(cachedFilters));
   }
 
-  // Get subjects
+  // Get active subjects
   const [subjects] = await db.query(
-    'SELECT id, name FROM subjects WHERE is_active = true ORDER BY name'
+    'SELECT id, name FROM subjects WHERE is_active = 1 ORDER BY name'
   );
 
   // Get years with question counts
-  const [years] = await db.query(
-    'SELECT DISTINCT year FROM questions WHERE year IS NOT NULL ORDER BY year DESC'
-  );
+  const [years] = await db.query(`
+    SELECT 
+      year,
+      COUNT(*) as question_count
+    FROM questions 
+    WHERE year IS NOT NULL 
+    GROUP BY year 
+    ORDER BY year DESC
+  `);
 
-  // Get difficulty levels with counts
-  const [difficulties] = await db.query(`
+  // Get degrees (exam types) with counts
+  const [degrees] = await db.query(`
     SELECT 
       degree,
       COUNT(*) as question_count
     FROM questions
-    WHERE degree IS NOT NULL AND is_active = true
+    WHERE degree IN ('Bpharm', 'Dpharm', 'Both')
     GROUP BY degree
     ORDER BY degree
   `);
+
+  // Log the results for debugging
+  console.log('Subjects found:', subjects.length);
+  console.log('Years found:', years.length);
+  console.log('Degrees found:', degrees.length);
 
   const result = {
     success: true,
@@ -132,9 +147,12 @@ const getTestFilters = catchAsync(async (req, res) => {
         id: s.id,
         name: s.name
       })),
-      years: years.map(y => y.year),
-      difficulties: difficulties.map(d => ({
-        level: d.degree,
+      years: years.map(y => ({
+        year: y.year,
+        count: y.question_count
+      })),
+      exams: degrees.map(d => ({
+        name: d.degree,
         count: d.question_count
       }))
     }
@@ -166,16 +184,17 @@ const submitTest = catchAsync(async (req, res) => {
     const [result] = await connection.query(
       `INSERT INTO test_results (
         user_id, 
-        subject_id, 
+        degree,
         total_questions, 
         score, 
         correct_answers,
         incorrect_answers,
         time_taken,
         started_at,
-        completed_at
-      ) VALUES (?, ?, ?, 0, 0, 0, ?, NOW(), NOW())`,
-      [userId, testData.subjectId, testData.totalQuestions, testData.timeTaken]
+        completed_at,
+        status
+      ) VALUES (?, ?, ?, 0, 0, 0, ?, NOW(), NOW(), 'completed')`,
+      [userId, testData.degree, testData.totalQuestions, testData.timeTaken]
     );
 
     const testId = result.insertId;
@@ -187,7 +206,7 @@ const submitTest = catchAsync(async (req, res) => {
     for (const [questionId, answer] of Object.entries(answers)) {
       // Get question details
       const [question] = await connection.query(
-        'SELECT correct_answer FROM questions WHERE id = ?',
+        'SELECT answer FROM questions WHERE id = ?',
         [questionId]
       );
 
@@ -195,7 +214,7 @@ const submitTest = catchAsync(async (req, res) => {
         throw new ApiError(`Question ${questionId} not found`, 404);
       }
 
-      const isCorrect = answer === question[0].correct_answer;
+      const isCorrect = answer === question[0].answer;
       // Each question is worth 1 point
       const points = isCorrect ? 1 : 0;
       totalScore += points;
@@ -285,14 +304,13 @@ const getTestHistory = catchAsync(async (req, res) => {
       tr.score,
       tr.time_taken,
       tr.created_at,
-      s.name as subject_name,
+      tr.degree,
       (
         SELECT COUNT(*)
         FROM test_answers ta
         WHERE ta.test_result_id = tr.id AND ta.is_correct = true
       ) as correct_answers
     FROM test_results tr
-    LEFT JOIN subjects s ON tr.subject_id = s.id
     WHERE tr.user_id = ?
     ORDER BY tr.created_at DESC
     LIMIT ? OFFSET ?`,
@@ -317,9 +335,9 @@ const getTestHistory = catchAsync(async (req, res) => {
       correctAnswers: test.correct_answers,
       timeTaken: test.time_taken,
       completedAt: test.created_at,
-      subject: test.subject_name ? {
-        name: test.subject_name
-      } : null
+      subject: {
+        name: test.degree
+      }
     }))
   };
 
@@ -351,12 +369,17 @@ const getTestById = catchAsync(async (req, res) => {
       JSON_ARRAYAGG(
         JSON_OBJECT(
           'questionId', ta.question_id,
-          'question', q.question_text,
+          'question', q.question,
           'selectedAnswer', ta.selected_answer,
-          'correctAnswer', q.correct_answer,
+          'correctAnswer', q.answer,
           'isCorrect', ta.is_correct,
-          'points', ta.points,
-          'explanation', q.explanation
+          'points', CASE WHEN ta.is_correct THEN 1 ELSE 0 END as points,
+          'options', JSON_ARRAY(
+            q.option1,
+            q.option2,
+            q.option3,
+            q.option4
+          )
         )
       ) as answers
     FROM test_results tr
@@ -382,9 +405,9 @@ const getTestById = catchAsync(async (req, res) => {
       score: test.score,
       timeTaken: test.time_taken,
       completedAt: test.created_at,
-      subject: test.subject_name ? {
-        name: test.subject_name
-      } : null,
+      subject: {
+        name: test.degree
+      },
       answers: test.answers
     }
   };
@@ -415,7 +438,7 @@ const getTestStats = catchAsync(async (req, res) => {
       ROUND(AVG(score), 2) as avg_score,
       MAX(score) as highest_score,
       SUM(time_taken) as total_time,
-      COUNT(DISTINCT subject_id) as subjects_covered
+      COUNT(DISTINCT degree) as subjects_covered
     FROM test_results
     WHERE user_id = ?
   `, [userId]);
@@ -423,14 +446,13 @@ const getTestStats = catchAsync(async (req, res) => {
   // Get subject-wise performance
   const [subjectStats] = await db.query(`
     SELECT 
-      s.name as subject_name,
+      degree as subject_name,
       COUNT(*) as tests_taken,
-      ROUND(AVG(tr.score), 2) as avg_score,
-      MAX(tr.score) as highest_score
-    FROM test_results tr
-    JOIN subjects s ON tr.subject_id = s.id
-    WHERE tr.user_id = ?
-    GROUP BY s.id
+      ROUND(AVG(score), 2) as avg_score,
+      MAX(score) as highest_score
+    FROM test_results
+    WHERE user_id = ?
+    GROUP BY degree
     ORDER BY avg_score DESC
   `, [userId]);
 
@@ -500,29 +522,27 @@ const getTestResults = catchAsync(async (req, res) => {
             tr.incorrect_answers,
             tr.time_taken,
             tr.created_at,
-            s.name as subject_name,
+            tr.degree,
             JSON_ARRAYAGG(
                 JSON_OBJECT(
                     'questionId', q.id,
-                    'question', q.question_text,
+                    'question', q.question,
                     'options', JSON_ARRAY(
-                        q.option_a,
-                        q.option_b,
-                        q.option_c,
-                        q.option_d
+                        q.option1,
+                        q.option2,
+                        q.option3,
+                        q.option4
                     ),
-                    'correctOption', q.correct_answer,
+                    'correctOption', q.answer,
                     'selectedOption', ta.selected_answer,
-                    'isCorrect', CAST(ta.is_correct AS UNSIGNED),
-                    'explanation', q.explanation
+                    'isCorrect', ta.is_correct
                 )
             ) as questions
         FROM test_results tr
-        LEFT JOIN subjects s ON tr.subject_id = s.id
         LEFT JOIN test_answers ta ON tr.id = ta.test_result_id
         LEFT JOIN questions q ON ta.question_id = q.id
         WHERE tr.id = ? AND tr.user_id = ?
-        GROUP BY tr.id, tr.score, tr.total_questions, tr.correct_answers, tr.incorrect_answers, tr.time_taken, tr.created_at, s.name
+        GROUP BY tr.id, tr.score, tr.total_questions, tr.correct_answers, tr.incorrect_answers, tr.time_taken, tr.created_at, tr.degree
     `, [testId, userId]);
 
     console.log('Test result query response:', testResult);
@@ -546,7 +566,7 @@ const getTestResults = catchAsync(async (req, res) => {
         data: {
             testId: result.id,
             subject: {
-                name: result.subject_name
+                name: result.degree
             },
             totalQuestions: result.total_questions,
             correctAnswers: result.correct_answers,

@@ -54,7 +54,7 @@ export const AuthProvider = ({ children }) => {
       console.log('Login Response:', response?.data);
       
       if (response?.data?.success) {
-        const { token, user } = response.data.data;
+        const { token, user } = response.data;
         localStorage.setItem('token', token);
         setUser(user);
         return true;
@@ -69,10 +69,27 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const register = async (userData) => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await apiService.auth.register(userData);
+      
+      if (response?.data?.success) {
+        return response.data;
+      }
+      throw new Error(response?.data?.message || 'Registration failed');
+    } catch (err) {
+      console.error('Registration failed:', err);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const logout = () => {
     localStorage.removeItem('token');
     setUser(null);
-    setError(null);
   };
 
   const value = {
@@ -82,6 +99,7 @@ export const AuthProvider = ({ children }) => {
     isAuthenticated: !!user,
     isAdmin: user?.is_admin || false,
     login,
+    register,
     logout,
     checkAuth
   };

@@ -38,7 +38,7 @@ const signIn = async (req, res, next) => {
 
     // Get user
     const [users] = await db.query(
-      'SELECT * FROM users WHERE email = ? AND is_active = true',
+      'SELECT * FROM users WHERE email = ? AND status = "active"',
       [email.toLowerCase()]
     );
 
@@ -82,11 +82,11 @@ const signIn = async (req, res, next) => {
 // Sign Up Function
 const signUp = async (req, res, next) => {
   try {
-    const { username, email, password, firstName, lastName, phoneNumber } = req.body;
+    const { email, password, fullName } = req.body;
 
     // Input validation
-    if (!username || !email || !password || !firstName || !lastName) {
-      throw new ApiError('All required fields must be provided', 400);
+    if (!email || !password || !fullName) {
+      throw new ApiError('Email, password and full name are required', 400);
     }
 
     // Validate password strength
@@ -97,20 +97,13 @@ const signUp = async (req, res, next) => {
 
     // Check for existing user with detailed error messages
     const [existingUsers] = await db.query(
-      'SELECT email, username FROM users WHERE email = ? OR username = ?',
-      [email.toLowerCase(), username.toLowerCase()]
+      'SELECT email FROM users WHERE email = ?',
+      [email.toLowerCase()]
     );
 
     if (existingUsers.length > 0) {
-      const existingUser = existingUsers[0];
-      if (existingUser.email === email.toLowerCase()) {
-        logger.warn('Registration attempt with existing email', { email });
-        throw new ApiError('An account with this email already exists. Please try signing in or use a different email address.', 400);
-      }
-      if (existingUser.username === username.toLowerCase()) {
-        logger.warn('Registration attempt with existing username', { username });
-        throw new ApiError('This username is already taken. Please choose a different username.', 400);
-      }
+      logger.warn('Registration attempt with existing email', { email });
+      throw new ApiError('An account with this email already exists. Please try signing in or use a different email address.', 400);
     }
 
     // Hash password
@@ -119,52 +112,35 @@ const signUp = async (req, res, next) => {
     // Create user
     const [result] = await db.query(
       `INSERT INTO users (
-        username,
         email,
         password,
-        first_name,
-        last_name,
-        phone_number,
-        is_verified,
+        full_name,
+        role,
+        status,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      ) VALUES (?, ?, ?, 'user', 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [
-        username.toLowerCase(),
         email.toLowerCase(),
         hashedPassword,
-        firstName,
-        lastName,
-        phoneNumber
+        fullName
       ]
     );
 
-    // Generate verification token
-    const verificationToken = jwt.sign(
-      { userId: result.insertId },
-      config.jwt.secret,
-      { expiresIn: config.jwt.verifyEmailExpirationHours }
-    );
-
-    // Send verification email
-    await sendVerificationEmail(email, verificationToken);
-
     logger.info('User registered successfully', {
       userId: result.insertId,
-      username,
       email
     });
 
     res.status(201).json({
       success: true,
-      message: 'Registration successful. Please check your email to verify your account.',
+      message: 'Registration successful. Please sign in.',
       user: {
         id: result.insertId,
-        username,
         email,
-        firstName,
-        lastName,
-        isVerified: false
+        fullName,
+        role: 'user',
+        status: 'active'
       }
     });
   } catch (error) {
@@ -192,17 +168,14 @@ const getCurrentUser = async (req, res, next) => {
     const [users] = await db.query(
       `SELECT 
         id, 
-        username, 
         email, 
-        first_name, 
-        last_name, 
-        phone_number, 
-        is_admin,
-        is_verified,
-        created_at, 
-        last_login
+        full_name,
+        role,
+        status,
+        created_at,
+        updated_at
       FROM users 
-      WHERE id = ? AND is_active = true`,
+      WHERE id = ? AND status = "active"`,
       [userId]
     );
     

@@ -1,4 +1,5 @@
 const db = require('../config/db').pool;
+
 const xlsx = require('xlsx');
 const logger = require('../config/logger');
 const { ApiError } = require('../utils/errors');
@@ -33,7 +34,7 @@ const getAllQuestions = catchAsync(async (req, res) => {
   }
 
   // Get total count
-  const [countResult] = await db.query('SELECT COUNT(*) as total FROM pyq_questions WHERE is_active = true');
+  const [countResult] = await db.query('SELECT COUNT(*) as total FROM questions WHERE is_active = true');
   const total = countResult[0].total;
 
   // Get paginated questions
@@ -42,7 +43,7 @@ const getAllQuestions = catchAsync(async (req, res) => {
       q.*,
       s.name as subject_name,
       s.code as subject_code
-    FROM pyq_questions q
+    FROM questions q
     LEFT JOIN subjects s ON q.subject_id = s.id
     WHERE q.is_active = true
     ORDER BY q.created_at DESC
@@ -86,7 +87,7 @@ const getQuestionsByFilters = catchAsync(async (req, res) => {
       q.*,
       s.name AS subject_name,
       s.code AS subject_code
-    FROM pyq_questions q
+    FROM questions q
     LEFT JOIN subjects s ON q.subject_id = s.id
     WHERE q.is_active = true
   `;
@@ -154,7 +155,7 @@ const getUniqueYears = catchAsync(async (req, res) => {
     SELECT 
       year,
       COUNT(*) as question_count
-    FROM pyq_questions 
+    FROM questions 
     WHERE is_active = true
     GROUP BY year 
     ORDER BY year DESC
@@ -190,7 +191,7 @@ const getQuestionById = catchAsync(async (req, res) => {
       s.name as subject_name,
       s.code as subject_code,
       u.username as created_by_user
-    FROM pyq_questions q
+    FROM questions q
     LEFT JOIN subjects s ON q.subject_id = s.id
     LEFT JOIN users u ON q.created_by = u.id
     WHERE q.id = ? AND q.is_active = true
@@ -224,7 +225,7 @@ const updateQuestion = catchAsync(async (req, res) => {
 
   // Check if question exists
   const [existing] = await db.query(
-    'SELECT id FROM pyq_questions WHERE id = ? AND is_active = true',
+    'SELECT id FROM questions WHERE id = ? AND is_active = true',
     [id]
   );
 
@@ -234,7 +235,7 @@ const updateQuestion = catchAsync(async (req, res) => {
 
   // Update question
   await db.query(`
-    UPDATE pyq_questions 
+    UPDATE questions 
     SET 
       question = ?,
       subject_id = ?,
@@ -277,7 +278,7 @@ const deleteQuestion = catchAsync(async (req, res) => {
 
   // Check if question exists and is active
   const [existing] = await db.query(
-    'SELECT id FROM pyq_questions WHERE id = ? AND is_active = true',
+    'SELECT id FROM questions WHERE id = ? AND is_active = true',
     [id]
   );
 
@@ -287,7 +288,7 @@ const deleteQuestion = catchAsync(async (req, res) => {
 
   // Soft delete
   await db.query(`
-    UPDATE pyq_questions 
+    UPDATE questions 
     SET 
       is_active = false,
       deleted_at = CURRENT_TIMESTAMP,
@@ -364,7 +365,7 @@ const updateQuestionsFromFile = catchAsync(async (req, res) => {
 
         // Insert question
         await connection.query(`
-          INSERT INTO pyq_questions (
+          INSERT INTO questions (
             year,
             subject_id,
             question,
@@ -453,7 +454,7 @@ const getRandomQuestions = catchAsync(async (req, res) => {
       s.name as subject_name,
       s.code as subject_code,
       s.id as subject_id
-    FROM pyq_questions q
+    FROM questions q
     JOIN subjects s ON q.subject_id = s.id
     WHERE q.is_active = true
   `;

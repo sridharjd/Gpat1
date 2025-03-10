@@ -14,7 +14,8 @@ import {
   Step,
   StepLabel,
   IconButton,
-  Snackbar
+  Snackbar,
+  useTheme
 } from '@mui/material';
 import {
   NavigateNext as NextIcon,
@@ -26,7 +27,8 @@ import apiService from '../../services/api';
 
 const MotionPaper = motion(Paper);
 
-const TestTaking = ({ questions, onComplete, subjectId }) => {
+const TestTaking = ({ questions, onComplete, subjectId, examType }) => {
+  const theme = useTheme();
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [answers, setAnswers] = useState({});
   const [loading, setLoading] = useState(false);
@@ -37,6 +39,7 @@ const TestTaking = ({ questions, onComplete, subjectId }) => {
     message: '',
     severity: 'info'
   });
+  const [unansweredQuestions, setUnansweredQuestions] = useState([]);
 
   useEffect(() => {
     console.log('TestTaking received questions:', questions);
@@ -79,6 +82,26 @@ const TestTaking = ({ questions, onComplete, subjectId }) => {
       setLoading(true);
       setError(null);
 
+      // Check for unanswered questions
+      const notAnswered = questions.reduce((acc, _, index) => {
+        if (!answers[index]) {
+          acc.push(index + 1);
+        }
+        return acc;
+      }, []);
+
+      if (notAnswered.length > 0) {
+        setUnansweredQuestions(notAnswered);
+        setError(`Please answer all questions before submitting. Unanswered questions: ${notAnswered.join(', ')}`);
+        setSnackbar({
+          open: true,
+          message: `Please answer questions: ${notAnswered.join(', ')}`,
+          severity: 'warning'
+        });
+        setLoading(false);
+        return;
+      }
+
       // Format answers as a map of questionId to answer
       const formattedAnswers = {};
       Object.entries(answers).forEach(([questionIndex, answer]) => {
@@ -92,7 +115,7 @@ const TestTaking = ({ questions, onComplete, subjectId }) => {
       // Prepare test data
       const testData = {
         testData: {
-          subjectId: subjectId || questions[0]?.subject?.id || questions[0]?.subject_id || null,
+          degree: examType,
           totalQuestions: questions.length,
           timeTaken: 3600 - timeLeft
         },
@@ -105,6 +128,7 @@ const TestTaking = ({ questions, onComplete, subjectId }) => {
       console.log('Test submission response:', response);
 
       if (response?.data?.success) {
+        setUnansweredQuestions([]);
         console.log('Test submitted successfully, calling onComplete with:', response.data.data);
         setSnackbar({
           open: true,
@@ -113,15 +137,15 @@ const TestTaking = ({ questions, onComplete, subjectId }) => {
         });
         onComplete(response.data.data);
       } else {
-        console.error('Test submission failed:', response);
-        throw new Error('Failed to submit test');
+        throw new Error(response?.data?.message || 'Failed to submit test');
       }
     } catch (err) {
       console.error('Error submitting test:', err);
-      setError(err.message || 'Failed to submit test');
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to submit test';
+      setError(errorMessage);
       setSnackbar({
         open: true,
-        message: err.message || 'Failed to submit test',
+        message: errorMessage,
         severity: 'error'
       });
     } finally {
@@ -137,6 +161,23 @@ const TestTaking = ({ questions, onComplete, subjectId }) => {
 
   const handleSnackbarClose = () => {
     setSnackbar({ ...snackbar, open: false });
+  };
+
+  // Add a function to check if current question is answered
+  const isCurrentQuestionAnswered = () => {
+    return !!answers[currentQuestion];
+  };
+
+  // Add visual indicator for unanswered questions in the stepper
+  const getStepStyle = (index) => {
+    if (unansweredQuestions.includes(index + 1)) {
+      return {
+        '& .MuiStepLabel-root .Mui-active': { color: theme.palette.warning.main },
+        '& .MuiStepLabel-root .Mui-completed': { color: theme.palette.warning.main },
+        '& .MuiStepLabel-root .Mui-error': { color: theme.palette.warning.main }
+      };
+    }
+    return {};
   };
 
   if (loading) {
@@ -171,9 +212,10 @@ const TestTaking = ({ questions, onComplete, subjectId }) => {
             <>
               <Stepper activeStep={currentQuestion} sx={{ mb: 4 }}>
                 {questions.map((_, index) => (
-                  <Step key={index}>
-                    <StepLabel>
+                  <Step key={index} sx={getStepStyle(index)}>
+                    <StepLabel error={unansweredQuestions.includes(index + 1)}>
                       Question {index + 1}
+                      {!answers[index] && ' ●'}
                     </StepLabel>
                   </Step>
                 ))}
@@ -182,6 +224,11 @@ const TestTaking = ({ questions, onComplete, subjectId }) => {
               <Box sx={{ mb: 3 }}>
                 <Typography variant="h6" gutterBottom>
                   Question {currentQuestion + 1} of {questions.length}
+                  {!isCurrentQuestionAnswered() && (
+                    <Typography component="span" color="warning.main" sx={{ ml: 1 }}>
+                      (Not answered)
+                    </Typography>
+                  )}
                 </Typography>
                 <Typography variant="body1" paragraph>
                   {questions[currentQuestion]?.question}

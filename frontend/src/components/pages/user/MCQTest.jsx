@@ -13,7 +13,12 @@ import {
   CircularProgress,
   Alert,
   Snackbar,
-  useTheme
+  useTheme,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions
 } from '@mui/material';
 import { motion } from 'framer-motion';
 import { useWebSocket } from '../../../contexts/WebSocketContext';
@@ -32,35 +37,113 @@ const MCQTest = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
-  const [filters, setFilters] = useState({ subjects: [], years: [] });
+  const [filters, setFilters] = useState({
+    exams: [],
+    subjects: [],
+    years: []
+  });
+  const [selectedExam, setSelectedExam] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('');
   const [selectedYear, setSelectedYear] = useState('');
   const [testStarted, setTestStarted] = useState(false);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
 
   const fetchFilters = useCallback(async () => {
     try {
+      setLoading(true);
+      console.log('Fetching filters from:', `${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/tests/filters`);
       const response = await apiService.test.getFilters();
-      if (response.data.success) {
-        setFilters(response.data.data);
-        setError('');
+      console.log('Raw API Response:', response);
+
+      if (response?.data?.success) {
+        // Log the raw data
+        console.log('Raw filters data:', response.data.data);
+
+        // Ensure we have all required arrays, using empty arrays as fallbacks
+        const rawData = response.data.data || {};
+        console.log('Processing raw data:', rawData);
+
+        const exams = Array.isArray(rawData.exams) ? rawData.exams : 
+                     Array.isArray(rawData.degrees) ? rawData.degrees : [];
+        const subjects = Array.isArray(rawData.subjects) ? rawData.subjects : [];
+        const years = Array.isArray(rawData.years) ? rawData.years : [];
+        
+        // Log each filter type
+        console.log('Processed exam types:', exams);
+        console.log('Processed subjects:', subjects);
+        console.log('Processed years:', years);
+
+        if (exams.length === 0) {
+          console.warn('No exam types found in the response');
+          setError('No exam types available. Please contact administrator.');
+        }
+
+        setFilters({
+          exams,
+          subjects,
+          years
+        });
+      } else {
+        console.error('Failed to fetch filters:', {
+          success: response?.data?.success,
+          message: response?.data?.message,
+          data: response?.data?.data
+        });
+        setError('Failed to load filters: ' + (response?.data?.message || 'Unknown error'));
+        setFilters({ exams: [], subjects: [], years: [] });
       }
     } catch (error) {
-      console.error('Error fetching filters:', error);
-      setError('Failed to load filters. Please try again later.');
+      console.error('Error fetching filters:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
+      setError('Failed to load filters. Please try again later. Error: ' + (error.message || 'Unknown error'));
+      setFilters({ exams: [], subjects: [], years: [] });
+    } finally {
+      setLoading(false);
     }
   }, []);
+
+  // Add an effect to log filters state changes
+  useEffect(() => {
+    console.log('Current filters state:', {
+      exams: filters.exams,
+      examCount: filters.exams.length,
+      subjects: filters.subjects,
+      subjectCount: filters.subjects.length,
+      years: filters.years,
+      yearCount: filters.years.length
+    });
+  }, [filters]);
 
   const fetchQuestions = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
+      
+      if (!selectedExam) {
+        setError('Please select an exam type');
+        setQuestions([]);
+        setLoading(false);
+        return;
+      }
+
+      console.log('Fetching questions with params:', {
+        count: 10,
+        degree: selectedExam,
+        subject_id: selectedSubject || undefined,
+        year: selectedYear || undefined
+      });
+
       const response = await apiService.test.getQuestions({
         count: 10,
+        degree: selectedExam,
         subject_id: selectedSubject || undefined,
         year: selectedYear || undefined
       });
       
-      console.log('Raw questions response:', response.data.data);
+      console.log('Questions API response:', response);
       
       if (response?.data?.success) {
         // Transform the questions data structure
@@ -78,10 +161,10 @@ const MCQTest = () => {
           } else {
             // If options are individual fields
             optionsArray = [
-              q.option_a || q.optionA,
-              q.option_b || q.optionB,
-              q.option_c || q.optionC,
-              q.option_d || q.optionD
+              q.option1 || q.optionA,
+              q.option2 || q.optionB,
+              q.option3 || q.optionC,
+              q.option4 || q.optionD
             ].filter(Boolean);
           }
 
@@ -103,21 +186,16 @@ const MCQTest = () => {
         
         console.log('Final transformed questions:', transformedQuestions);
         setQuestions(transformedQuestions);
-      } else {
-        throw new Error('Failed to fetch questions');
+        setError('');
       }
     } catch (err) {
       console.error('Error fetching questions:', err);
-      setError(err.message || 'Failed to fetch questions');
-      setSnackbar({
-        open: true,
-        message: err.message || 'Failed to fetch questions',
-        severity: 'error'
-      });
+      setError('Failed to fetch questions. Please try again.');
+      setQuestions([]);
     } finally {
       setLoading(false);
     }
-  }, [selectedSubject, selectedYear]);
+  }, [selectedExam, selectedSubject, selectedYear]);
 
   useEffect(() => {
     fetchFilters();
@@ -170,6 +248,21 @@ const MCQTest = () => {
     setSnackbar({ ...snackbar, open: false });
   };
 
+  const handleCancelTest = () => {
+    setShowConfirmDialog(true);
+  };
+
+  const handleConfirmCancel = () => {
+    setTestStarted(false);
+    setShowConfirmDialog(false);
+    setQuestions([]);
+    fetchQuestions(); // Refresh questions for next attempt
+  };
+
+  const handleCloseConfirmDialog = () => {
+    setShowConfirmDialog(false);
+  };
+
   if (loading) {
     return (
       <Container maxWidth="lg" sx={{ py: 4, textAlign: 'center' }}>
@@ -192,11 +285,54 @@ const MCQTest = () => {
           </Typography>
 
           {error && (
-            <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>
+            <>
+              <Alert 
+                severity={error.includes('select an exam') ? 'warning' : 'info'}
+                sx={{ 
+                  mb: 2,
+                  '& .MuiAlert-message': {
+                    width: '100%'
+                  }
+                }}
+              >
+                <Typography variant="body1" gutterBottom>
+                  {error}
+                </Typography>
+                {error.includes('No questions found') && (
+                  <Box sx={{ mt: 2 }}>
+                    <Typography variant="body2" gutterBottom>
+                      Suggestions:
+                    </Typography>
+                    <ul style={{ margin: 0, paddingLeft: '1.5rem' }}>
+                      <li>Try selecting a different exam type</li>
+                      <li>Try selecting a different subject</li>
+                      <li>Clear the year filter to see more questions</li>
+                      <li>If the problem persists, try again later</li>
+                    </ul>
+                  </Box>
+                )}
+              </Alert>
+            </>
           )}
 
           {!testStarted ? (
             <Box sx={{ mb: 3 }}>
+              <FormControl fullWidth sx={{ mb: 2 }} required>
+                <InputLabel>Exam Type</InputLabel>
+                <Select
+                  value={selectedExam}
+                  onChange={(e) => setSelectedExam(e.target.value)}
+                  label="Exam Type *"
+                >
+                  <MenuItem value="">Select Exam Type</MenuItem>
+                  {(filters.exams || []).map((exam) => (
+                    <MenuItem key={exam.name} value={exam.name}>
+                      {exam.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
               <FormControl fullWidth sx={{ mb: 2 }}>
                 <InputLabel>Subject</InputLabel>
                 <Select
@@ -205,7 +341,7 @@ const MCQTest = () => {
                   label="Subject"
                 >
                   <MenuItem value="">All Subjects</MenuItem>
-                  {filters.subjects.map((subject) => (
+                  {(filters.subjects || []).map((subject) => (
                     <MenuItem key={subject.id} value={subject.id}>
                       {subject.name}
                     </MenuItem>
@@ -221,7 +357,7 @@ const MCQTest = () => {
                   label="Year"
                 >
                   <MenuItem value="">All Years</MenuItem>
-                  {filters.years.map((year) => (
+                  {(filters.years || []).map((year) => (
                     <MenuItem key={year} value={year}>
                       {year}
                     </MenuItem>
@@ -231,22 +367,50 @@ const MCQTest = () => {
 
               <Button
                 variant="contained"
+                onClick={() => {
+                  setError('');
+                  setSelectedExam('');
+                  setSelectedSubject('');
+                  setSelectedYear('');
+                  fetchQuestions();
+                }}
+                sx={{ mb: 2 }}
+                fullWidth
+              >
+                Reset Filters
+              </Button>
+
+              <Button
+                variant="contained"
                 onClick={() => setTestStarted(true)}
-                disabled={!questions.length}
+                disabled={!questions.length || !selectedExam}
+                color="primary"
                 fullWidth
               >
                 Start Test
               </Button>
             </Box>
           ) : (
-            <TestTaking
-              questions={questions}
-              testId={Date.now().toString()}
-              subjectId={selectedSubject}
-              onComplete={handleTestComplete}
-              timeLimit={3600}
-              showTimer={true}
-            />
+            <>
+              <TestTaking
+                questions={questions}
+                testId={Date.now().toString()}
+                degree={selectedExam}
+                examType={selectedExam}
+                onComplete={handleTestComplete}
+                timeLimit={3600}
+                showTimer={true}
+              />
+              <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
+                <Button
+                  variant="outlined"
+                  color="error"
+                  onClick={handleCancelTest}
+                >
+                  Cancel Test
+                </Button>
+              </Box>
+            </>
           )}
         </Box>
       </MotionPaper>
@@ -265,6 +429,30 @@ const MCQTest = () => {
           {snackbar.message}
         </Alert>
       </Snackbar>
+
+      <Dialog
+        open={showConfirmDialog}
+        onClose={handleCloseConfirmDialog}
+        aria-labelledby="alert-dialog-title"
+        aria-describedby="alert-dialog-description"
+      >
+        <DialogTitle id="alert-dialog-title">
+          {"Cancel Test?"}
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText id="alert-dialog-description">
+            Are you sure you want to cancel the test? Your progress will be lost.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseConfirmDialog} color="primary">
+            Continue Test
+          </Button>
+          <Button onClick={handleConfirmCancel} color="error" autoFocus>
+            Cancel Test
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 };
